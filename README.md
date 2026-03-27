@@ -6,6 +6,9 @@ Interactive TUI hex viewer with a decode panel and plugin system.
 cargo run -- <file>
 ```
 
+<img width="5094" height="2618" alt="image" src="https://github.com/user-attachments/assets/334b3268-4b84-4e0f-a923-4bbfff355d34" />
+
+
 ## Features
 
 - Hex view with color-coded byte categories (null, ASCII, whitespace, high bytes)
