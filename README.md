@@ -102,3 +102,8 @@ cargo build --release
 - [memmap2](https://github.com/RazrFalcon/memmap2-rs) -- memory-mapped file I/O
 - [mlua](https://github.com/mlua-rs/mlua) -- Lua 5.4 scripting
 - [wasmtime](https://github.com/bytecodealliance/wasmtime) -- WASM runtime
+
+## Note
+
+- Coded up with Claude Code
+
