@@ -1,0 +1,7 @@
+/target
+/examples/wasm-decoder-rust/target
+
+*.swp
+*.swo
+*~
+.DS_Store
