@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::decode::Endian;
+use crate::decode::{DecodedValue, Endian, RANGE_COLORS};
 use crate::file_buffer::FileBuffer;
 
 pub const BYTES_PER_ROW: usize = 16;
@@ -40,6 +40,10 @@ pub struct App {
 
     // Panel sizing
     pub decode_panel_width: u16, // right panel width in columns
+
+    // Decode panel focus: which entry is highlighted for range coloring
+    pub decode_entries: Vec<DecodedValue>, // cached decode results (set by ui.rs each frame)
+    pub decode_focus: Option<usize>,       // index into decode_entries (None = no focus)
 }
 
 impl App {
@@ -61,6 +65,8 @@ impl App {
             bit_selection_anchor: None,
             bit_selection_end: None,
             decode_panel_width: 180,
+            decode_entries: Vec::new(),
+            decode_focus: None,
         }
     }
 
@@ -253,11 +259,21 @@ impl App {
                 self.update_selection_on_move();
                 self.ensure_cursor_visible();
             }
+            KeyCode::Tab => {
+                self.focus_next_decode_entry();
+            }
+            KeyCode::BackTab => {
+                self.focus_prev_decode_entry();
+            }
             KeyCode::Esc => {
-                if self.input_mode == InputMode::Selecting {
+                if self.decode_focus.is_some() {
+                    self.decode_focus = None;
+                } else if self.input_mode == InputMode::Selecting {
                     self.input_mode = InputMode::Normal;
+                    self.clear_selection();
+                } else {
+                    self.clear_selection();
                 }
-                self.clear_selection();
             }
             _ => {}
         }
@@ -313,6 +329,83 @@ impl App {
 
         self.update_selection_on_move();
         self.ensure_cursor_visible();
+    }
+
+    fn focus_next_decode_entry(&mut self) {
+        if self.decode_entries.is_empty() {
+            return;
+        }
+        // Find entries that have ranges
+        let range_indices: Vec<usize> = self
+            .decode_entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.range.is_some())
+            .map(|(i, _)| i)
+            .collect();
+        if range_indices.is_empty() {
+            return;
+        }
+        match self.decode_focus {
+            None => self.decode_focus = Some(range_indices[0]),
+            Some(current) => {
+                // Find the next range entry after current
+                if let Some(&next) = range_indices.iter().find(|&&i| i > current) {
+                    self.decode_focus = Some(next);
+                } else {
+                    self.decode_focus = Some(range_indices[0]); // wrap
+                }
+            }
+        }
+    }
+
+    fn focus_prev_decode_entry(&mut self) {
+        if self.decode_entries.is_empty() {
+            return;
+        }
+        let range_indices: Vec<usize> = self
+            .decode_entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.range.is_some())
+            .map(|(i, _)| i)
+            .collect();
+        if range_indices.is_empty() {
+            return;
+        }
+        match self.decode_focus {
+            None => self.decode_focus = Some(*range_indices.last().unwrap()),
+            Some(current) => {
+                if let Some(&prev) = range_indices.iter().rev().find(|&&i| i < current) {
+                    self.decode_focus = Some(prev);
+                } else {
+                    self.decode_focus = Some(*range_indices.last().unwrap()); // wrap
+                }
+            }
+        }
+    }
+
+    /// Returns the byte ranges to highlight in the hex view from the focused decoder,
+    /// as (absolute_start, absolute_end, color_index) tuples.
+    /// If a single entry is focused, highlights all entries from the same decoder group.
+    pub fn active_range_highlights(&self) -> Vec<(usize, usize, usize)> {
+        let (sel_start, _) = self.selection_range();
+        let mut highlights = Vec::new();
+
+        // Collect all entries with ranges and assign color indices
+        let mut color_idx = 0;
+        for entry in &self.decode_entries {
+            if let Some((offset, length)) = entry.range {
+                if length > 0 {
+                    let abs_start = sel_start + offset;
+                    let abs_end = abs_start + length - 1;
+                    highlights.push((abs_start, abs_end, color_idx % RANGE_COLORS.len()));
+                    color_idx += 1;
+                }
+            }
+        }
+
+        highlights
     }
 
     fn ensure_cursor_visible(&mut self) {

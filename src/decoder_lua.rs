@@ -98,6 +98,8 @@ end
                     results.push(DecodedValue {
                         label: decoder.name.clone(),
                         value: format!("error: {}", e),
+                        range: None,
+                        color_index: None,
                     });
                 }
             }
@@ -138,7 +140,18 @@ end
                     if let Ok(entry) = pair {
                         let label: String = entry.get("label").unwrap_or_default();
                         let value: String = entry.get("value").unwrap_or_default();
-                        decoded.push(DecodedValue { label, value });
+                        let offset: Option<usize> = entry.get("offset").ok();
+                        let length: Option<usize> = entry.get("length").ok();
+                        let range = match (offset, length) {
+                            (Some(o), Some(l)) => Some((o, l)),
+                            _ => None,
+                        };
+                        decoded.push(DecodedValue {
+                            label,
+                            value,
+                            range,
+                            color_index: None,
+                        });
                     }
                 }
             }

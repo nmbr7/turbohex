@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{App, InputMode, SelectionMode};
-use crate::decode::{decode_bits, decode_selection};
+use crate::decode::{decode_bits, decode_selection, DecodedValue, RANGE_COLORS};
 use crate::decoder_lua::LuaDecoderManager;
 use crate::decoder_wasm::WasmDecoderManager;
 use crate::hex_view::HexView;
@@ -37,6 +37,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderManager, w
     // Account for block borders (2 rows)
     app.visible_rows = hex_area.height.saturating_sub(2) as usize;
 
+    // Decode panel (must run before hex view so decode_entries is populated for range highlights)
+    draw_decode_panel(frame, app, lua_mgr, wasm_mgr, decode_area);
+
     // Hex view
     let hex_block = Block::default()
         .title(format!(" {} ", app.filename))
@@ -45,9 +48,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderManager, w
 
     let hex_view = HexView::new(app).block(hex_block);
     frame.render_widget(hex_view, hex_area);
-
-    // Decode panel
-    draw_decode_panel(frame, app, lua_mgr, wasm_mgr, decode_area);
 
     // Status bar
     draw_status_bar(frame, app, status_bar);
@@ -58,17 +58,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderManager, w
     }
 }
 
-fn draw_decode_panel(frame: &mut Frame, app: &App, lua_mgr: &mut LuaDecoderManager, wasm_mgr: &mut WasmDecoderManager, area: Rect) {
+fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderManager, wasm_mgr: &mut WasmDecoderManager, area: Rect) {
     let block = Block::default()
         .title(" Decode ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
         .padding(Padding::horizontal(1));
 
-    let mut lines: Vec<Line> = Vec::new();
+    // Collect all decode entries into a flat list
+    // Each entry tracks: the DecodedValue, which section it belongs to, and its index
+    struct Section {
+        title: &'static str,
+        title_color: Color,
+        label_color: Color,
+        entries: Vec<DecodedValue>,
+    }
 
-    // Get decoded values
-    let values = match app.mode {
+    let mut sections: Vec<Section> = Vec::new();
+
+    // Built-in decoders
+    let builtin = match app.mode {
         SelectionMode::Byte => {
             let bytes = app.selected_bytes();
             decode_selection(bytes, app.endian)
@@ -78,76 +87,122 @@ fn draw_decode_panel(frame: &mut Frame, app: &App, lua_mgr: &mut LuaDecoderManag
             decode_bits(app.buffer.data(), bit_off, bit_len, app.endian)
         }
     };
+    sections.push(Section {
+        title: "",
+        title_color: Color::Yellow,
+        label_color: Color::Yellow,
+        entries: builtin,
+    });
 
-    for dv in &values {
-        if dv.label.is_empty() {
-            lines.push(Line::from(""));
-        } else {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{:>12}: ", dv.label),
-                    Style::default().fg(Color::Yellow),
-                ),
-                Span::styled(dv.value.clone(), Style::default().fg(Color::White)),
-            ]));
-        }
-    }
-
-    // Lua decoder results
+    // Lua decoders
     if app.mode == SelectionMode::Byte {
         let bytes = app.selected_bytes();
         let lua_results = lua_mgr.decode(bytes, app.endian);
         if !lua_results.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "── Lua Decoders ──",
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            for dv in &lua_results {
-                if dv.label.is_empty() {
-                    lines.push(Line::from(""));
-                } else {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{:>12}: ", dv.label),
-                            Style::default().fg(Color::Magenta),
-                        ),
-                        Span::styled(dv.value.clone(), Style::default().fg(Color::White)),
-                    ]));
-                }
-            }
+            sections.push(Section {
+                title: "── Lua Decoders ──",
+                title_color: Color::Magenta,
+                label_color: Color::Magenta,
+                entries: lua_results,
+            });
         }
     }
 
-    // WASM decoder results
+    // WASM decoders
     if app.mode == SelectionMode::Byte {
         let bytes = app.selected_bytes();
         let wasm_results = wasm_mgr.decode(bytes, app.endian);
         if !wasm_results.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "── WASM Decoders ──",
-                Style::default()
-                    .fg(Color::Rgb(100, 200, 255))
-                    .add_modifier(Modifier::BOLD),
-            )));
-            for dv in &wasm_results {
-                if dv.label.is_empty() {
-                    lines.push(Line::from(""));
-                } else {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{:>12}: ", dv.label),
-                            Style::default().fg(Color::Rgb(100, 200, 255)),
-                        ),
-                        Span::styled(dv.value.clone(), Style::default().fg(Color::White)),
-                    ]));
-                }
-            }
+            sections.push(Section {
+                title: "── WASM Decoders ──",
+                title_color: Color::Rgb(100, 200, 255),
+                label_color: Color::Rgb(100, 200, 255),
+                entries: wasm_results,
+            });
         }
     }
+
+    // Flatten into decode_entries with color indices assigned
+    let mut all_entries: Vec<DecodedValue> = Vec::new();
+    let mut color_counter = 0usize;
+
+    for section in &sections {
+        for mut entry in section.entries.clone() {
+            if entry.range.is_some() {
+                entry.color_index = Some(color_counter % RANGE_COLORS.len());
+                color_counter += 1;
+            }
+            all_entries.push(entry);
+        }
+    }
+
+    // Build lines for rendering
+    let mut lines: Vec<Line> = Vec::new();
+    let mut entry_idx = 0usize; // tracks position in all_entries
+
+    for (sec_i, section) in sections.iter().enumerate() {
+        if sec_i > 0 {
+            lines.push(Line::from(""));
+            if !section.title.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    section.title,
+                    Style::default()
+                        .fg(section.title_color)
+                        .add_modifier(Modifier::BOLD),
+                )));
+            }
+        }
+
+        for dv in &section.entries {
+            let is_focused = app.decode_focus == Some(entry_idx);
+
+            if dv.label.is_empty() && dv.range.is_none() {
+                lines.push(Line::from(""));
+            } else {
+                // Color swatch for entries with ranges
+                let swatch = if let Some(ci) = all_entries.get(entry_idx).and_then(|e| e.color_index) {
+                    let (r, g, b) = RANGE_COLORS[ci];
+                    Span::styled("█ ", Style::default().fg(Color::Rgb(r, g, b)))
+                } else {
+                    Span::styled("  ", Style::default())
+                };
+
+                let label_style = if is_focused {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(section.label_color)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(section.label_color)
+                };
+
+                let value_style = if is_focused {
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                let focus_indicator = if is_focused { ">" } else { " " };
+
+                lines.push(Line::from(vec![
+                    Span::styled(focus_indicator, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    swatch,
+                    Span::styled(
+                        format!("{:>10}: ", dv.label),
+                        label_style,
+                    ),
+                    Span::styled(dv.value.clone(), value_style),
+                ]));
+            }
+            entry_idx += 1;
+        }
+    }
+
+    // Cache entries in app for hex_view to read
+    app.decode_entries = all_entries;
 
     let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
@@ -242,6 +297,8 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
             ("[  /  ]", "Shrink / grow decode panel"),
         ]),
         ("Decoders", &[
+            ("Tab / S-Tab", "Focus next/prev decoded field"),
+            ("Esc", "Clear decoder focus"),
             ("Lua", "~/.config/turbohex/decoders/*.lua"),
             ("WASM", "~/.config/turbohex/decoders/*.wasm"),
         ]),

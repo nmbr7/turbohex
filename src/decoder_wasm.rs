@@ -87,6 +87,8 @@ impl WasmDecoderManager {
                     results.push(DecodedValue {
                         label: name,
                         value: format!("error: {}", e),
+                        range: None,
+                        color_index: None,
                     });
                 }
             }
@@ -146,7 +148,8 @@ impl WasmDecoderManager {
 }
 
 /// Minimal JSON array parser — no serde dependency needed.
-/// Expects: [{"label":"...","value":"..."},...]
+/// Expects: [{"label":"...","value":"...","offset":N,"length":N},...]
+/// `offset` and `length` are optional numeric fields for range mapping.
 fn parse_json_results(json: &str) -> anyhow::Result<Vec<DecodedValue>> {
     let json = json.trim();
     if json == "[]" || json.is_empty() {
@@ -154,7 +157,6 @@ fn parse_json_results(json: &str) -> anyhow::Result<Vec<DecodedValue>> {
     }
 
     let mut results = Vec::new();
-    // Simple state machine parser for our specific JSON format
     let chars: Vec<char> = json.chars().collect();
     let len = chars.len();
 
@@ -164,10 +166,7 @@ fn parse_json_results(json: &str) -> anyhow::Result<Vec<DecodedValue>> {
 
     let mut i = 1; // skip '['
     while i < len - 1 {
-        // Skip whitespace and commas
-        while i < len - 1 && (chars[i].is_whitespace() || chars[i] == ',') {
-            i += 1;
-        }
+        skip_ws_comma(&chars, &mut i, len);
         if i >= len - 1 || chars[i] == ']' {
             break;
         }
@@ -179,30 +178,40 @@ fn parse_json_results(json: &str) -> anyhow::Result<Vec<DecodedValue>> {
 
         let mut label = String::new();
         let mut value = String::new();
+        let mut offset: Option<usize> = None;
+        let mut length: Option<usize> = None;
 
-        // Parse key-value pairs inside the object
         while i < len && chars[i] != '}' {
-            // Skip whitespace and commas
-            while i < len && (chars[i].is_whitespace() || chars[i] == ',') {
-                i += 1;
-            }
+            skip_ws_comma(&chars, &mut i, len);
             if i >= len || chars[i] == '}' {
                 break;
             }
 
-            // Parse key
             let key = parse_json_string(&chars, &mut i);
             // Skip colon and whitespace
             while i < len && (chars[i] == ':' || chars[i].is_whitespace()) {
                 i += 1;
             }
-            // Parse value
-            let val = parse_json_string(&chars, &mut i);
-
-            if key == "label" {
-                label = val;
-            } else if key == "value" {
-                value = val;
+            // Determine if value is string or number
+            if i < len && chars[i] == '"' {
+                let val = parse_json_string(&chars, &mut i);
+                match key.as_str() {
+                    "label" => label = val,
+                    "value" => value = val,
+                    _ => {}
+                }
+            } else if i < len && (chars[i].is_ascii_digit() || chars[i] == '-') {
+                let num = parse_json_number(&chars, &mut i);
+                match key.as_str() {
+                    "offset" => offset = Some(num as usize),
+                    "length" => length = Some(num as usize),
+                    _ => {}
+                }
+            } else {
+                // skip unknown value types
+                while i < len && chars[i] != ',' && chars[i] != '}' {
+                    i += 1;
+                }
             }
         }
         if i < len && chars[i] == '}' {
@@ -210,16 +219,43 @@ fn parse_json_results(json: &str) -> anyhow::Result<Vec<DecodedValue>> {
         }
 
         if !label.is_empty() {
-            results.push(DecodedValue { label, value });
+            let range = match (offset, length) {
+                (Some(o), Some(l)) => Some((o, l)),
+                _ => None,
+            };
+            results.push(DecodedValue {
+                label,
+                value,
+                range,
+                color_index: None,
+            });
         }
     }
 
     Ok(results)
 }
 
+fn skip_ws_comma(chars: &[char], i: &mut usize, len: usize) {
+    while *i < len && (chars[*i].is_whitespace() || chars[*i] == ',') {
+        *i += 1;
+    }
+}
+
+fn parse_json_number(chars: &[char], i: &mut usize) -> i64 {
+    let len = chars.len();
+    let start = *i;
+    if *i < len && chars[*i] == '-' {
+        *i += 1;
+    }
+    while *i < len && chars[*i].is_ascii_digit() {
+        *i += 1;
+    }
+    let s: String = chars[start..*i].iter().collect();
+    s.parse().unwrap_or(0)
+}
+
 fn parse_json_string(chars: &[char], i: &mut usize) -> String {
     let len = chars.len();
-    // Skip to opening quote
     while *i < len && chars[*i] != '"' {
         *i += 1;
     }

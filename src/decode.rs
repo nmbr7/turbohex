@@ -15,9 +15,18 @@ impl Endian {
     }
 }
 
+/// A single decoded field. If `range` is set, it maps to a byte range
+/// (relative to the selection start) that produced this value.
+/// Decoders for wire formats can return multiple entries with ranges
+/// to color-code different fields in the hex view.
+#[derive(Clone)]
 pub struct DecodedValue {
     pub label: String,
     pub value: String,
+    /// Byte range relative to selection start: (offset, length)
+    pub range: Option<(usize, usize)>,
+    /// Which decoder group this belongs to (set by the rendering layer)
+    pub color_index: Option<usize>,
 }
 
 impl DecodedValue {
@@ -25,9 +34,30 @@ impl DecodedValue {
         Self {
             label: label.into(),
             value: value.into(),
+            range: None,
+            color_index: None,
         }
     }
+
+    pub fn with_range(mut self, offset: usize, length: usize) -> Self {
+        self.range = Some((offset, length));
+        self
+    }
 }
+
+/// A color palette for mapping decoder field ranges to distinct colors.
+pub const RANGE_COLORS: &[(u8, u8, u8)] = &[
+    (100, 180, 240),  // blue
+    (240, 160, 80),   // orange
+    (120, 220, 120),  // green
+    (220, 120, 220),  // purple
+    (240, 220, 80),   // yellow
+    (100, 220, 220),  // cyan
+    (240, 120, 120),  // red
+    (180, 140, 240),  // lavender
+    (140, 220, 180),  // teal
+    (240, 180, 160),  // salmon
+];
 
 pub fn decode_selection(bytes: &[u8], endian: Endian) -> Vec<DecodedValue> {
     let mut results = Vec::new();

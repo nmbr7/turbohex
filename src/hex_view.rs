@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use crate::app::{App, BYTES_PER_ROW};
+use crate::decode::RANGE_COLORS;
 
 pub struct HexView<'a> {
     app: &'a App,
@@ -35,6 +36,7 @@ impl Widget for HexView<'_> {
 
         let data = self.app.buffer.data();
         let (sel_start, sel_end) = self.app.selection_range();
+        let range_highlights = self.app.active_range_highlights();
 
         // Layout: OFFSET  HH HH HH ... HH  │ASCII...│
 
@@ -73,7 +75,7 @@ impl Widget for HexView<'_> {
                 if byte_offset < row_end {
                     let byte_val = data[byte_offset];
                     let hex = format!("{:02X}", byte_val);
-                    let style = self.byte_style(byte_offset, byte_val, sel_start, sel_end);
+                    let style = self.byte_style(byte_offset, byte_val, sel_start, sel_end, &range_highlights);
 
                     for ch in hex.chars() {
                         if x < inner.x + inner.width {
@@ -130,7 +132,7 @@ impl Widget for HexView<'_> {
                     } else {
                         '·'
                     };
-                    let style = self.ascii_style(byte_offset, byte_val, sel_start, sel_end);
+                    let style = self.ascii_style(byte_offset, byte_val, sel_start, sel_end, &range_highlights);
                     if x < inner.x + inner.width {
                         buf.cell_mut((x, y)).map(|cell| {
                             cell.set_char(ch).set_style(style);
@@ -158,27 +160,39 @@ impl Widget for HexView<'_> {
 }
 
 impl HexView<'_> {
-    fn byte_style(&self, offset: usize, byte_val: u8, sel_start: usize, sel_end: usize) -> Style {
+    fn find_range_color(&self, offset: usize, highlights: &[(usize, usize, usize)]) -> Option<(u8, u8, u8)> {
+        for &(start, end, color_idx) in highlights {
+            if offset >= start && offset <= end {
+                return Some(RANGE_COLORS[color_idx]);
+            }
+        }
+        None
+    }
+
+    fn byte_style(&self, offset: usize, byte_val: u8, sel_start: usize, sel_end: usize, highlights: &[(usize, usize, usize)]) -> Style {
         let is_cursor = offset == self.app.cursor;
         let is_selected = offset >= sel_start && offset <= sel_end;
-
-        let base_fg = byte_color(byte_val);
 
         if is_cursor {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::White)
                 .add_modifier(Modifier::BOLD)
+        } else if let Some((r, g, b)) = self.find_range_color(offset, highlights) {
+            // Range highlight from focused decoder
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(r, g, b))
         } else if is_selected {
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Rgb(80, 120, 200))
         } else {
-            Style::default().fg(base_fg)
+            Style::default().fg(byte_color(byte_val))
         }
     }
 
-    fn ascii_style(&self, offset: usize, byte_val: u8, sel_start: usize, sel_end: usize) -> Style {
+    fn ascii_style(&self, offset: usize, byte_val: u8, sel_start: usize, sel_end: usize, highlights: &[(usize, usize, usize)]) -> Style {
         let is_cursor = offset == self.app.cursor;
         let is_selected = offset >= sel_start && offset <= sel_end;
 
@@ -187,6 +201,10 @@ impl HexView<'_> {
                 .fg(Color::Black)
                 .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD)
+        } else if let Some((r, g, b)) = self.find_range_color(offset, highlights) {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Rgb(r / 2, g / 2, b / 2)) // dimmer for ASCII column
         } else if is_selected {
             Style::default()
                 .fg(Color::Black)
