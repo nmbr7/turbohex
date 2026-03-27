@@ -5,9 +5,7 @@ Interactive TUI hex viewer with a decode panel and plugin system.
 ```
 cargo run -- <file>
 ```
-
-<img width="5094" height="2618" alt="image" src="https://github.com/user-attachments/assets/334b3268-4b84-4e0f-a923-4bbfff355d34" />
-
+<img width="5100" height="2612" alt="image" src="https://github.com/user-attachments/assets/59d32ad0-e5ae-4690-bbed-5623aa459419" />
 
 ## Features
 
