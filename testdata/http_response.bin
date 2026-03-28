@@ -1,0 +1,7 @@
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 45
+Server: nginx/1.24
+X-Request-Id: abc-def-123
+
+<html><body><h1>Hello World\!</h1></body></html>

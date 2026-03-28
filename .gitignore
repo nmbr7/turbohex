@@ -1,5 +1,7 @@
 /target
 /examples/wasm-decoder-rust/target
+/examples/wasm-decoder-c/*.wasm
+/examples/wasm-decoder-http/target
 
 *.swp
 *.swo

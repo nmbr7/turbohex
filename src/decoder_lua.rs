@@ -84,7 +84,11 @@ end
         }
     }
 
-    pub fn decode(&mut self, bytes: &[u8], endian: Endian) -> Vec<DecodedValue> {
+    pub fn decoder_names(&self) -> Vec<String> {
+        self.decoders.iter().map(|d| d.name.clone()).collect()
+    }
+
+    pub fn decode(&mut self, bytes: &[u8], endian: Endian, enabled: &dyn Fn(&str) -> bool) -> Vec<DecodedValue> {
         if !self.loaded {
             self.load_decoders();
         }
@@ -92,6 +96,9 @@ end
         let mut results = Vec::new();
 
         for decoder in &self.decoders {
+            if !enabled(&decoder.name) {
+                continue;
+            }
             match self.run_decoder(&decoder.path, &decoder.name, bytes, endian) {
                 Ok(mut vals) => results.append(&mut vals),
                 Err(e) => {

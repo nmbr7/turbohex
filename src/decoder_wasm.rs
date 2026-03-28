@@ -72,7 +72,11 @@ impl WasmDecoderManager {
         }
     }
 
-    pub fn decode(&mut self, bytes: &[u8], endian: Endian) -> Vec<DecodedValue> {
+    pub fn decoder_names(&self) -> Vec<String> {
+        self.decoders.iter().map(|d| d.name.clone()).collect()
+    }
+
+    pub fn decode(&mut self, bytes: &[u8], endian: Endian, enabled: &dyn Fn(&str) -> bool) -> Vec<DecodedValue> {
         if !self.loaded {
             self.load_decoders();
         }
@@ -81,6 +85,9 @@ impl WasmDecoderManager {
 
         for i in 0..self.decoders.len() {
             let name = self.decoders[i].name.clone();
+            if !enabled(&name) {
+                continue;
+            }
             match self.run_decoder(i, bytes, endian) {
                 Ok(mut vals) => results.append(&mut vals),
                 Err(e) => {

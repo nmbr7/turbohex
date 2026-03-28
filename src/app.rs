@@ -17,6 +17,22 @@ pub enum InputMode {
     Selecting,
     GotoOffset,
     Help,
+    DecoderSettings,
+}
+
+/// Tracks an individual decoder's name, source, and enabled state.
+#[derive(Clone)]
+pub struct DecoderInfo {
+    pub name: String,
+    pub source: DecoderSource,
+    pub enabled: bool,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum DecoderSource {
+    Builtin,
+    Lua,
+    Wasm,
 }
 
 pub struct App {
@@ -44,6 +60,10 @@ pub struct App {
     // Decode panel focus: which entry is highlighted for range coloring
     pub decode_entries: Vec<DecodedValue>, // cached decode results (set by ui.rs each frame)
     pub decode_focus: Option<usize>,       // index into decode_entries (None = no focus)
+
+    // Decoder settings
+    pub decoders: Vec<DecoderInfo>,       // all registered decoders
+    pub decoder_settings_cursor: usize,   // cursor in settings popup
 }
 
 impl App {
@@ -67,7 +87,36 @@ impl App {
             decode_panel_width: 180,
             decode_entries: Vec::new(),
             decode_focus: None,
+            decoders: Vec::new(),
+            decoder_settings_cursor: 0,
         }
+    }
+
+    /// Register a decoder. Called during init from main.rs.
+    pub fn register_decoder(&mut self, name: String, source: DecoderSource) {
+        self.decoders.push(DecoderInfo {
+            name,
+            source,
+            enabled: true,
+        });
+    }
+
+    /// Check if a decoder with the given name and source is enabled.
+    pub fn is_decoder_enabled(&self, name: &str, source: &DecoderSource) -> bool {
+        self.decoders
+            .iter()
+            .find(|d| d.name == name && d.source == *source)
+            .map(|d| d.enabled)
+            .unwrap_or(true)
+    }
+
+    /// Check if the built-in decoder is enabled.
+    pub fn is_builtin_enabled(&self) -> bool {
+        self.decoders
+            .iter()
+            .find(|d| d.source == DecoderSource::Builtin)
+            .map(|d| d.enabled)
+            .unwrap_or(true)
     }
 
     pub fn file_len(&self) -> usize {
@@ -119,6 +168,7 @@ impl App {
                 // Any key dismisses help
                 self.input_mode = InputMode::Normal;
             }
+            InputMode::DecoderSettings => self.handle_decoder_settings_key(key),
             InputMode::GotoOffset => self.handle_goto_key(key),
             InputMode::Normal | InputMode::Selecting => self.handle_normal_key(key),
         }
@@ -139,6 +189,32 @@ impl App {
             }
             KeyCode::Char(c) => {
                 self.goto_input.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_decoder_settings_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('d') | KeyCode::Char('q') => {
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Up => {
+                if self.decoder_settings_cursor > 0 {
+                    self.decoder_settings_cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if !self.decoders.is_empty()
+                    && self.decoder_settings_cursor < self.decoders.len() - 1
+                {
+                    self.decoder_settings_cursor += 1;
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                if let Some(decoder) = self.decoders.get_mut(self.decoder_settings_cursor) {
+                    decoder.enabled = !decoder.enabled;
+                }
             }
             _ => {}
         }
@@ -220,6 +296,10 @@ impl App {
             KeyCode::Char('g') => {
                 self.input_mode = InputMode::GotoOffset;
                 self.goto_input.clear();
+            }
+            KeyCode::Char('d') => {
+                self.input_mode = InputMode::DecoderSettings;
+                self.decoder_settings_cursor = 0;
             }
             KeyCode::Char('[') => {
                 self.decode_panel_width = self.decode_panel_width.saturating_sub(2).max(20);
@@ -385,14 +465,13 @@ impl App {
         }
     }
 
-    /// Returns the byte ranges to highlight in the hex view from the focused decoder,
+    /// Returns the byte ranges to highlight in the hex view from decode entries,
     /// as (absolute_start, absolute_end, color_index) tuples.
-    /// If a single entry is focused, highlights all entries from the same decoder group.
+    /// Always returns all range-mapped entries for baseline color coding.
     pub fn active_range_highlights(&self) -> Vec<(usize, usize, usize)> {
         let (sel_start, _) = self.selection_range();
         let mut highlights = Vec::new();
 
-        // Collect all entries with ranges and assign color indices
         let mut color_idx = 0;
         for entry in &self.decode_entries {
             if let Some((offset, length)) = entry.range {
@@ -406,6 +485,21 @@ impl App {
         }
 
         highlights
+    }
+
+    /// Returns the byte range of the currently focused decode entry (if any),
+    /// as (absolute_start, absolute_end). Used for brighter highlighting.
+    pub fn focused_range(&self) -> Option<(usize, usize)> {
+        let focus_idx = self.decode_focus?;
+        let entry = self.decode_entries.get(focus_idx)?;
+        let (offset, length) = entry.range?;
+        if length == 0 {
+            return None;
+        }
+        let (sel_start, _) = self.selection_range();
+        let abs_start = sel_start + offset;
+        let abs_end = abs_start + length - 1;
+        Some((abs_start, abs_end))
     }
 
     fn ensure_cursor_visible(&mut self) {

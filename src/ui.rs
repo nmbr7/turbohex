@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, InputMode, SelectionMode};
+use crate::app::{App, DecoderSource, InputMode, SelectionMode};
 use crate::decode::{decode_bits, decode_selection, DecodedValue, RANGE_COLORS};
 use crate::decoder_lua::LuaDecoderManager;
 use crate::decoder_wasm::WasmDecoderManager;
@@ -52,9 +52,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderManager, w
     // Status bar
     draw_status_bar(frame, app, status_bar);
 
-    // Help popup overlay
-    if app.input_mode == InputMode::Help {
-        draw_help_popup(frame, size);
+    // Popup overlays
+    match app.input_mode {
+        InputMode::Help => draw_help_popup(frame, size),
+        InputMode::DecoderSettings => draw_decoder_settings(frame, app, size),
+        _ => {}
     }
 }
 
@@ -77,27 +79,30 @@ fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderM
     let mut sections: Vec<Section> = Vec::new();
 
     // Built-in decoders
-    let builtin = match app.mode {
-        SelectionMode::Byte => {
-            let bytes = app.selected_bytes();
-            decode_selection(bytes, app.endian)
-        }
-        SelectionMode::Bit => {
-            let (bit_off, bit_len) = app.bit_selection();
-            decode_bits(app.buffer.data(), bit_off, bit_len, app.endian)
-        }
-    };
-    sections.push(Section {
-        title: "",
-        title_color: Color::Yellow,
-        label_color: Color::Yellow,
-        entries: builtin,
-    });
+    if app.is_builtin_enabled() {
+        let builtin = match app.mode {
+            SelectionMode::Byte => {
+                let bytes = app.selected_bytes();
+                decode_selection(bytes, app.endian)
+            }
+            SelectionMode::Bit => {
+                let (bit_off, bit_len) = app.bit_selection();
+                decode_bits(app.buffer.data(), bit_off, bit_len, app.endian)
+            }
+        };
+        sections.push(Section {
+            title: "",
+            title_color: Color::Yellow,
+            label_color: Color::Yellow,
+            entries: builtin,
+        });
+    }
 
-    // Lua decoders
+    // Lua decoders (filter by enabled)
     if app.mode == SelectionMode::Byte {
         let bytes = app.selected_bytes();
-        let lua_results = lua_mgr.decode(bytes, app.endian);
+        let lua_enabled = |name: &str| app.is_decoder_enabled(name, &DecoderSource::Lua);
+        let lua_results = lua_mgr.decode(bytes, app.endian, &lua_enabled);
         if !lua_results.is_empty() {
             sections.push(Section {
                 title: "── Lua Decoders ──",
@@ -108,10 +113,11 @@ fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderM
         }
     }
 
-    // WASM decoders
+    // WASM decoders (filter by enabled)
     if app.mode == SelectionMode::Byte {
         let bytes = app.selected_bytes();
-        let wasm_results = wasm_mgr.decode(bytes, app.endian);
+        let wasm_enabled = |name: &str| app.is_decoder_enabled(name, &DecoderSource::Wasm);
+        let wasm_results = wasm_mgr.decode(bytes, app.endian, &wasm_enabled);
         if !wasm_results.is_empty() {
             sections.push(Section {
                 title: "── WASM Decoders ──",
@@ -227,7 +233,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled("█", Style::default().fg(Color::White)),
             ])
         }
-        InputMode::Normal | InputMode::Selecting | InputMode::Help => {
+        InputMode::Normal | InputMode::Selecting | InputMode::Help | InputMode::DecoderSettings => {
             let mut spans = vec![
                 Span::styled(
                     format!(" Offset: 0x{:08X}", app.cursor),
@@ -297,10 +303,9 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
             ("[  /  ]", "Shrink / grow decode panel"),
         ]),
         ("Decoders", &[
+            ("d", "Decoder settings (enable/disable)"),
             ("Tab / S-Tab", "Focus next/prev decoded field"),
             ("Esc", "Clear decoder focus"),
-            ("Lua", "~/.config/turbohex/decoders/*.lua"),
-            ("WASM", "~/.config/turbohex/decoders/*.wasm"),
         ]),
         ("Other", &[
             ("?", "Show this help"),
@@ -340,6 +345,83 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
         .title(" Help ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow))
+        .style(Style::default().bg(Color::Rgb(20, 20, 30)));
+
+    frame.render_widget(Clear, popup);
+    frame.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+fn draw_decoder_settings(frame: &mut Frame, app: &App, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Use Up/Down to navigate, Space/Enter to toggle",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    for (i, decoder) in app.decoders.iter().enumerate() {
+        let is_cursor = i == app.decoder_settings_cursor;
+
+        let checkbox = if decoder.enabled { "[x]" } else { "[ ]" };
+        let source_tag = match decoder.source {
+            DecoderSource::Builtin => "builtin",
+            DecoderSource::Lua => "lua",
+            DecoderSource::Wasm => "wasm",
+        };
+        let source_color = match decoder.source {
+            DecoderSource::Builtin => Color::Yellow,
+            DecoderSource::Lua => Color::Magenta,
+            DecoderSource::Wasm => Color::Rgb(100, 200, 255),
+        };
+
+        let cursor_indicator = if is_cursor { ">" } else { " " };
+
+        let checkbox_color = if decoder.enabled {
+            Color::Green
+        } else {
+            Color::Red
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {} ", cursor_indicator),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{} ", checkbox),
+                Style::default().fg(checkbox_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:<32}", decoder.name),
+                if is_cursor {
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                },
+            ),
+            Span::styled(format!("  {}", source_tag), Style::default().fg(source_color)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Esc to close",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let height = (lines.len() + 2) as u16;
+    let width = 64u16;
+    let popup = centered_rect(width, height, area);
+
+    let block = Block::default()
+        .title(" Decoder Settings ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
         .style(Style::default().bg(Color::Rgb(20, 20, 30)));
 
     frame.render_widget(Clear, popup);

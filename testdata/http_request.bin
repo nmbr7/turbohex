@@ -1,0 +1,9 @@
+GET /api/v1/users?page=2&limit=50 HTTP/1.1
+Host: example.com
+Content-Type: application/json; charset=utf-8
+Authorization: Bearer tok_abc123
+Accept: */*
+Connection: keep-alive
+User-Agent: turbohex/0.1
+
+{"query":"hello"}

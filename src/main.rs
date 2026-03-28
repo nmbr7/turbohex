@@ -18,7 +18,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use app::App;
+use app::{App, DecoderSource};
 use decoder_lua::LuaDecoderManager;
 use decoder_wasm::WasmDecoderManager;
 use file_buffer::FileBuffer;
@@ -47,6 +47,15 @@ fn main() -> io::Result<()> {
     lua_mgr.load_decoders();
     let mut wasm_mgr = WasmDecoderManager::new();
     wasm_mgr.load_decoders();
+
+    // Register all decoders in app for settings UI
+    app.register_decoder("Built-in".to_string(), DecoderSource::Builtin);
+    for name in lua_mgr.decoder_names() {
+        app.register_decoder(name, DecoderSource::Lua);
+    }
+    for name in wasm_mgr.decoder_names() {
+        app.register_decoder(name, DecoderSource::Wasm);
+    }
 
     // Setup terminal
     enable_raw_mode()?;
