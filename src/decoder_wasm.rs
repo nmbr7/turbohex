@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use wasmtime::*;
 
+use crate::app::{DecoderParam, ParamType};
 use crate::decode::{DecodedValue, Endian};
 
 /// WASM decoder ABI:
@@ -76,7 +77,44 @@ impl WasmDecoderManager {
         self.decoders.iter().map(|d| d.name.clone()).collect()
     }
 
-    pub fn decode(&mut self, bytes: &[u8], endian: Endian, enabled: &dyn Fn(&str) -> bool) -> Vec<DecodedValue> {
+    /// Query the optional `params()` export from a WASM decoder.
+    /// Returns param definitions parsed from JSON.
+    pub fn query_params(&self, decoder_name: &str) -> Vec<DecoderParam> {
+        let decoder = match self.decoders.iter().find(|d| d.name == decoder_name) {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+        let mut store = Store::new(&self.engine, ());
+        let instance = match Instance::new(&mut store, &decoder.module, &[]) {
+            Ok(i) => i,
+            Err(_) => return Vec::new(),
+        };
+        let memory = match instance.get_memory(&mut store, "memory") {
+            Some(m) => m,
+            None => return Vec::new(),
+        };
+        let params_fn = match instance.get_typed_func::<(), i32>(&mut store, "params") {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
+        let result_ptr = match params_fn.call(&mut store, ()) {
+            Ok(p) => p,
+            Err(_) => return Vec::new(),
+        };
+        let mem_data = memory.data(&store);
+        let start = result_ptr as usize;
+        let mut end = start;
+        while end < mem_data.len() && mem_data[end] != 0 {
+            end += 1;
+        }
+        let json_str = match std::str::from_utf8(&mem_data[start..end]) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        parse_param_definitions(json_str)
+    }
+
+    pub fn decode(&mut self, bytes: &[u8], endian: Endian, enabled: &dyn Fn(&str) -> bool, params: &dyn Fn(&str) -> Vec<(String, String)>) -> Vec<DecodedValue> {
         if !self.loaded {
             self.load_decoders();
         }
@@ -88,7 +126,8 @@ impl WasmDecoderManager {
             if !enabled(&name) {
                 continue;
             }
-            match self.run_decoder(i, bytes, endian) {
+            let decoder_params = params(&name);
+            match self.run_decoder(i, bytes, endian, &decoder_params) {
                 Ok(mut vals) => results.append(&mut vals),
                 Err(e) => {
                     results.push(DecodedValue {
@@ -109,6 +148,7 @@ impl WasmDecoderManager {
         idx: usize,
         bytes: &[u8],
         endian: Endian,
+        params: &[(String, String)],
     ) -> anyhow::Result<Vec<DecodedValue>> {
         let decoder = &self.decoders[idx];
         let mut store = Store::new(&self.engine, ());
@@ -131,13 +171,26 @@ impl WasmDecoderManager {
         memory.data_mut(&mut store)[input_ptr as usize..input_ptr as usize + bytes.len()]
             .copy_from_slice(bytes);
 
-        // Call decode
         let endian_val = match endian {
             Endian::Little => 0,
             Endian::Big => 1,
         };
-        let result_ptr =
-            decode_fn.call(&mut store, (input_ptr, bytes.len() as i32, endian_val))?;
+
+        // Try decode_with_params first, fall back to decode
+        let result_ptr = if !params.is_empty() {
+            if let Ok(decode_wp) = instance.get_typed_func::<(i32, i32, i32, i32, i32), i32>(&mut store, "decode_with_params") {
+                // Build params JSON: {"key":"value",...}
+                let params_json = build_params_json(params);
+                let params_ptr = alloc_fn.call(&mut store, params_json.len() as i32)?;
+                memory.data_mut(&mut store)[params_ptr as usize..params_ptr as usize + params_json.len()]
+                    .copy_from_slice(params_json.as_bytes());
+                decode_wp.call(&mut store, (input_ptr, bytes.len() as i32, endian_val, params_ptr, params_json.len() as i32))?
+            } else {
+                decode_fn.call(&mut store, (input_ptr, bytes.len() as i32, endian_val))?
+            }
+        } else {
+            decode_fn.call(&mut store, (input_ptr, bytes.len() as i32, endian_val))?
+        };
 
         // Read NUL-terminated JSON string from result pointer
         let mem_data = memory.data(&store);
@@ -303,4 +356,122 @@ fn decoders_path() -> PathBuf {
         .join(".config")
         .join("turbohex")
         .join("decoders")
+}
+
+/// Build a JSON object string from param key-value pairs: {"key":"value",...}
+fn build_params_json(params: &[(String, String)]) -> String {
+    let mut json = String::from("{");
+    for (i, (k, v)) in params.iter().enumerate() {
+        if i > 0 {
+            json.push(',');
+        }
+        json.push('"');
+        json_escape_into(&mut json, k);
+        json.push_str("\":\"");
+        json_escape_into(&mut json, v);
+        json.push('"');
+    }
+    json.push('}');
+    json
+}
+
+fn json_escape_into(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+}
+
+/// Parse param definitions from JSON: [{"name":"...","type":"...","default":"...","choices":["..."]}]
+fn parse_param_definitions(json: &str) -> Vec<DecoderParam> {
+    let json = json.trim();
+    if json == "[]" || json.is_empty() {
+        return Vec::new();
+    }
+    let chars: Vec<char> = json.chars().collect();
+    let len = chars.len();
+    if chars.first() != Some(&'[') || chars.last() != Some(&']') {
+        return Vec::new();
+    }
+
+    let mut params = Vec::new();
+    let mut i = 1;
+    while i < len - 1 {
+        skip_ws_comma(&chars, &mut i, len);
+        if i >= len - 1 || chars[i] == ']' {
+            break;
+        }
+        if chars[i] != '{' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+
+        let mut name = String::new();
+        let mut type_str = String::from("string");
+        let mut default = String::new();
+        let mut choices: Vec<String> = Vec::new();
+
+        while i < len && chars[i] != '}' {
+            skip_ws_comma(&chars, &mut i, len);
+            if i >= len || chars[i] == '}' {
+                break;
+            }
+            let key = parse_json_string(&chars, &mut i);
+            while i < len && (chars[i] == ':' || chars[i].is_whitespace()) {
+                i += 1;
+            }
+            if i < len && chars[i] == '"' {
+                let val = parse_json_string(&chars, &mut i);
+                match key.as_str() {
+                    "name" => name = val,
+                    "type" => type_str = val,
+                    "default" => default = val,
+                    _ => {}
+                }
+            } else if i < len && chars[i] == '[' {
+                // Parse choices array
+                i += 1;
+                while i < len && chars[i] != ']' {
+                    skip_ws_comma(&chars, &mut i, len);
+                    if i < len && chars[i] == '"' {
+                        choices.push(parse_json_string(&chars, &mut i));
+                    } else if i < len && chars[i] != ']' {
+                        i += 1;
+                    }
+                }
+                if i < len {
+                    i += 1; // skip ']'
+                }
+            } else {
+                while i < len && chars[i] != ',' && chars[i] != '}' {
+                    i += 1;
+                }
+            }
+        }
+        if i < len && chars[i] == '}' {
+            i += 1;
+        }
+
+        if !name.is_empty() {
+            let param_type = match type_str.as_str() {
+                "int" => ParamType::Int,
+                "bool" => ParamType::Bool,
+                "choice" => ParamType::Choice(choices),
+                _ => ParamType::String,
+            };
+            params.push(DecoderParam {
+                name,
+                param_type,
+                default: default.clone(),
+                value: default,
+            });
+        }
+    }
+    params
 }

@@ -24,9 +24,10 @@ A Lua decoder is a single `.lua` file that defines a global `decode` function.
 ### Function Signature
 
 ```lua
-function decode(bytes, endian)
+function decode(bytes, endian, params)
     -- bytes:  table of byte values (1-indexed, e.g. bytes[1] is the first byte)
     -- endian: string, either "LE" (little-endian) or "BE" (big-endian)
+    -- params: table of {name = value} pairs from user-configured parameters
     --
     -- Returns: table of {label, value} entries, with optional range fields
     return {
@@ -35,6 +36,35 @@ function decode(bytes, endian)
     }
 end
 ```
+
+### Optional: Configurable Parameters
+
+Define an optional `params()` function to declare parameters the user can
+configure in the decoder settings UI (`d` key). The UI will show input
+fields for each parameter under the decoder.
+
+```lua
+function params()
+    return {
+        {name = "header_size", type = "int", default = "4"},
+        {name = "format", type = "choice", default = "hex", choices = {"hex", "dec", "oct"}},
+        {name = "show_ascii", type = "bool", default = "true"},
+        {name = "prefix", type = "string", default = ""},
+    }
+end
+```
+
+Parameter types:
+
+| Type     | UI behavior                                   | Values           |
+|----------|-----------------------------------------------|------------------|
+| `string` | Text input (Enter to edit)                    | Any string       |
+| `int`    | Text input, validated as integer              | Integer string   |
+| `bool`   | Toggle with Space/Enter                       | `"true"`/`"false"` |
+| `choice` | Cycle through `choices` with Enter            | One of `choices` |
+
+The `params` table is passed as the third argument to `decode()`.
+Access values as `params.header_size`, `params.format`, etc.
 
 ### Fields
 
@@ -53,7 +83,14 @@ which decoded field.
 
 ```lua
 -- ~/.config/turbohex/decoders/checksum.lua
-function decode(bytes, endian)
+
+function params()
+    return {
+        {name = "format", type = "choice", default = "hex", choices = {"hex", "dec"}},
+    }
+end
+
+function decode(bytes, endian, params)
     local results = {}
     if #bytes > 0 then
         local sum = 0
@@ -62,8 +99,13 @@ function decode(bytes, endian)
             sum = sum + bytes[i]
             xor_val = xor_val ~ bytes[i]
         end
-        table.insert(results, {label = "Byte Sum", value = tostring(sum)})
-        table.insert(results, {label = "XOR", value = string.format("0x%02X", xor_val & 0xFF)})
+        if params.format == "hex" then
+            table.insert(results, {label = "Byte Sum", value = string.format("0x%X", sum)})
+            table.insert(results, {label = "XOR", value = string.format("0x%02X", xor_val & 0xFF)})
+        else
+            table.insert(results, {label = "Byte Sum", value = tostring(sum)})
+            table.insert(results, {label = "XOR", value = tostring(xor_val & 0xFF)})
+        end
         table.insert(results, {label = "Byte Avg", value = string.format("%.1f", sum / #bytes)})
     end
     return results
@@ -72,13 +114,15 @@ end
 
 ## WASM Decoder ABI
 
-A WASM decoder is a `.wasm` module (no WASI required) that exports three symbols:
+A WASM decoder is a `.wasm` module (no WASI required) that exports these symbols:
 
-| Export     | Signature                               | Description                                        |
-|------------|-----------------------------------------|----------------------------------------------------|
-| `memory`   | WebAssembly linear memory               | Shared memory for input/output                     |
-| `alloc`    | `(size: i32) -> i32`                    | Allocate `size` bytes, return pointer              |
-| `decode`   | `(ptr: i32, len: i32, endian: i32) -> i32` | Decode bytes, return pointer to result JSON    |
+| Export                | Signature                                              | Required | Description                              |
+|-----------------------|--------------------------------------------------------|----------|------------------------------------------|
+| `memory`              | WebAssembly linear memory                              | yes      | Shared memory for input/output           |
+| `alloc`               | `(size: i32) -> i32`                                   | yes      | Allocate `size` bytes, return pointer    |
+| `decode`              | `(ptr: i32, len: i32, endian: i32) -> i32`             | yes      | Decode bytes, return result JSON pointer |
+| `params`              | `() -> i32`                                            | no       | Return param definitions JSON pointer    |
+| `decode_with_params`  | `(ptr: i32, len: i32, endian: i32, params_ptr: i32, params_len: i32) -> i32` | no | Decode with user params |
 
 ### `decode` Parameters
 
@@ -103,6 +147,23 @@ Returns a pointer to a **NUL-terminated JSON string** in linear memory with this
 - `length` (number, optional): byte length of the field
 
 When `offset` and `length` are both present, the hex view highlights those bytes.
+
+### Optional: Configurable Parameters (WASM)
+
+Export a `params()` function that returns a NUL-terminated JSON pointer:
+
+```json
+[
+  {"name": "header_size", "type": "int", "default": "4"},
+  {"name": "format", "type": "choice", "default": "hex", "choices": ["hex", "dec"]},
+  {"name": "verbose", "type": "bool", "default": "true"}
+]
+```
+
+If `params()` is exported, also export `decode_with_params`:
+- `params_ptr`/`params_len` point to a UTF-8 JSON object in memory: `{"name":"value",...}`
+- The host writes params via `alloc` before calling `decode_with_params`
+- If the user has no params set, the regular `decode` is called instead
 
 ### Example: WASM Decoder in Rust
 

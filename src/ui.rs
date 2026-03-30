@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, DecoderSource, InputMode, SelectionMode};
+use crate::app::{App, DecoderSource, InputMode, ParamType, SelectionMode};
 use crate::decode::{decode_bits, decode_selection, DecodedValue, RANGE_COLORS};
 use crate::decoder_lua::LuaDecoderManager;
 use crate::decoder_wasm::WasmDecoderManager;
@@ -59,7 +59,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderManager, w
     // Popup overlays
     match app.input_mode {
         InputMode::Help => draw_help_popup(frame, size),
-        InputMode::DecoderSettings => draw_decoder_settings(frame, app, size),
+        InputMode::DecoderSettings | InputMode::ParamEdit => draw_decoder_settings(frame, app, size),
         _ => {}
     }
 }
@@ -106,7 +106,8 @@ fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderM
     if app.mode == SelectionMode::Byte {
         let bytes = app.selected_bytes();
         let lua_enabled = |name: &str| app.is_decoder_enabled(name, &DecoderSource::Lua);
-        let lua_results = lua_mgr.decode(bytes, app.endian, &lua_enabled);
+        let lua_params = |name: &str| app.decoder_params(name, &DecoderSource::Lua);
+        let lua_results = lua_mgr.decode(bytes, app.endian, &lua_enabled, &lua_params);
         if !lua_results.is_empty() {
             sections.push(Section {
                 title: "── Lua Decoders ──",
@@ -121,7 +122,8 @@ fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderM
     if app.mode == SelectionMode::Byte {
         let bytes = app.selected_bytes();
         let wasm_enabled = |name: &str| app.is_decoder_enabled(name, &DecoderSource::Wasm);
-        let wasm_results = wasm_mgr.decode(bytes, app.endian, &wasm_enabled);
+        let wasm_params = |name: &str| app.decoder_params(name, &DecoderSource::Wasm);
+        let wasm_results = wasm_mgr.decode(bytes, app.endian, &wasm_enabled, &wasm_params);
         if !wasm_results.is_empty() {
             sections.push(Section {
                 title: "── WASM Decoders ──",
@@ -149,6 +151,7 @@ fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderM
     // Build lines for rendering
     let mut lines: Vec<Line> = Vec::new();
     let mut entry_idx = 0usize; // tracks position in all_entries
+    let mut focused_line: Option<usize> = None;
 
     for (sec_i, section) in sections.iter().enumerate() {
         if sec_i > 0 {
@@ -165,6 +168,9 @@ fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderM
 
         for dv in &section.entries {
             let is_focused = app.decode_focus == Some(entry_idx);
+            if is_focused {
+                focused_line = Some(lines.len());
+            }
 
             if dv.label.is_empty() && dv.range.is_none() {
                 lines.push(Line::from(""));
@@ -214,8 +220,18 @@ fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderM
     // Cache entries in app for hex_view to read
     app.decode_entries = all_entries;
 
+    // Auto-scroll to keep focused entry visible
+    let inner_height = area.height.saturating_sub(2) as usize; // subtract borders
+    if let Some(fl) = focused_line {
+        if fl < app.decode_scroll_offset {
+            app.decode_scroll_offset = fl;
+        } else if fl >= app.decode_scroll_offset + inner_height {
+            app.decode_scroll_offset = fl.saturating_sub(inner_height - 1);
+        }
+    }
+
     // Clamp scroll offset to content
-    let max_scroll = lines.len().saturating_sub(1);
+    let max_scroll = lines.len().saturating_sub(inner_height);
     if app.decode_scroll_offset > max_scroll {
         app.decode_scroll_offset = max_scroll;
     }
@@ -246,7 +262,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled("█", Style::default().fg(Color::White)),
             ])
         }
-        InputMode::Normal | InputMode::Selecting | InputMode::Help | InputMode::DecoderSettings => {
+        InputMode::Normal | InputMode::Selecting | InputMode::Help | InputMode::DecoderSettings | InputMode::ParamEdit => {
             let mut spans = vec![
                 Span::styled(
                     format!(" Offset: 0x{:08X} ({})", app.cursor, app.cursor),
@@ -369,13 +385,16 @@ fn draw_decoder_settings(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Use Up/Down to navigate, Space/Enter to toggle",
+        "  Up/Down: navigate  Space/Enter: toggle/edit  Esc: close",
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(""));
 
-    for (i, decoder) in app.decoders.iter().enumerate() {
-        let is_cursor = i == app.decoder_settings_cursor;
+    let mut flat_row = 0usize;
+    let is_editing = app.input_mode == InputMode::ParamEdit;
+
+    for decoder in &app.decoders {
+        let is_cursor = flat_row == app.decoder_settings_cursor;
 
         let checkbox = if decoder.enabled { "[x]" } else { "[ ]" };
         let source_tag = match decoder.source {
@@ -390,19 +409,12 @@ fn draw_decoder_settings(frame: &mut Frame, app: &App, area: Rect) {
         };
 
         let cursor_indicator = if is_cursor { ">" } else { " " };
-
-        let checkbox_color = if decoder.enabled {
-            Color::Green
-        } else {
-            Color::Red
-        };
+        let checkbox_color = if decoder.enabled { Color::Green } else { Color::Red };
 
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {} ", cursor_indicator),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("{} ", checkbox),
@@ -411,15 +423,60 @@ fn draw_decoder_settings(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 format!("{:<32}", decoder.name),
                 if is_cursor {
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 },
             ),
             Span::styled(format!("  {}", source_tag), Style::default().fg(source_color)),
         ]));
+        flat_row += 1;
+
+        // Render params under this decoder
+        for param in &decoder.params {
+            let is_param_cursor = flat_row == app.decoder_settings_cursor;
+            let indicator = if is_param_cursor { ">" } else { " " };
+
+            let type_hint = match &param.param_type {
+                ParamType::String => "str",
+                ParamType::Int => "int",
+                ParamType::Bool => "bool",
+                ParamType::Choice(_) => "choice",
+            };
+
+            let display_value = if is_param_cursor && is_editing {
+                format!("{}█", app.param_edit_input)
+            } else {
+                param.value.clone()
+            };
+
+            let value_style = if is_param_cursor && is_editing {
+                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else if is_param_cursor {
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {} ", indicator),
+                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("    ", Style::default()),
+                Span::styled(
+                    format!("{:<20}", param.name),
+                    if is_param_cursor {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Cyan)
+                    },
+                ),
+                Span::styled(format!("[{}] ", type_hint), Style::default().fg(Color::DarkGray)),
+                Span::styled(display_value, value_style),
+            ]));
+            flat_row += 1;
+        }
     }
 
     lines.push(Line::from(""));
@@ -428,8 +485,8 @@ fn draw_decoder_settings(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::DarkGray),
     )));
 
-    let height = (lines.len() + 2) as u16;
-    let width = 64u16;
+    let height = (lines.len() + 2).min(area.height as usize) as u16;
+    let width = 72u16;
     let popup = centered_rect(width, height, area);
 
     let block = Block::default()

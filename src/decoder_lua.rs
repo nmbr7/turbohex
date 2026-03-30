@@ -1,6 +1,7 @@
 use mlua::{Lua, Result as LuaResult, Value};
 use std::path::PathBuf;
 
+use crate::app::{DecoderParam, ParamType};
 use crate::decode::{DecodedValue, Endian};
 
 struct LuaDecoder {
@@ -88,7 +89,62 @@ end
         self.decoders.iter().map(|d| d.name.clone()).collect()
     }
 
-    pub fn decode(&mut self, bytes: &[u8], endian: Endian, enabled: &dyn Fn(&str) -> bool) -> Vec<DecodedValue> {
+    /// Query the optional `params()` function from a Lua decoder.
+    /// Returns param definitions: [{name, type, default, choices?}]
+    pub fn query_params(&self, decoder_name: &str) -> Vec<DecoderParam> {
+        let decoder = match self.decoders.iter().find(|d| d.name == decoder_name) {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+        let source = match std::fs::read_to_string(&decoder.path) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        self.lua.scope(|_scope| {
+            self.lua.load(&source).exec().ok();
+            let params_fn: mlua::Function = match self.lua.globals().get("params") {
+                Ok(f) => f,
+                Err(_) => return Ok(Vec::new()),
+            };
+            let result: Value = params_fn.call(()).unwrap_or(Value::Nil);
+            let mut params = Vec::new();
+            if let Value::Table(table) = result {
+                for entry in table.sequence_values::<mlua::Table>().flatten() {
+                    let name: String = entry.get("name").unwrap_or_default();
+                    let type_str: String = entry.get("type").unwrap_or_else(|_| "string".to_string());
+                    let default: String = entry.get("default").unwrap_or_default();
+                    let param_type = match type_str.as_str() {
+                        "int" => ParamType::Int,
+                        "bool" => ParamType::Bool,
+                        "choice" => {
+                            let choices: Vec<String> = entry
+                                .get::<mlua::Table>("choices")
+                                .ok()
+                                .map(|t| {
+                                    t.sequence_values::<String>()
+                                        .flatten()
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            ParamType::Choice(choices)
+                        }
+                        _ => ParamType::String,
+                    };
+                    if !name.is_empty() {
+                        params.push(DecoderParam {
+                            name,
+                            param_type,
+                            default: default.clone(),
+                            value: default,
+                        });
+                    }
+                }
+            }
+            Ok(params)
+        }).unwrap_or_default()
+    }
+
+    pub fn decode(&mut self, bytes: &[u8], endian: Endian, enabled: &dyn Fn(&str) -> bool, params: &dyn Fn(&str) -> Vec<(String, String)>) -> Vec<DecodedValue> {
         if !self.loaded {
             self.load_decoders();
         }
@@ -99,7 +155,8 @@ end
             if !enabled(&decoder.name) {
                 continue;
             }
-            match self.run_decoder(&decoder.path, &decoder.name, bytes, endian) {
+            let decoder_params = params(&decoder.name);
+            match self.run_decoder(&decoder.path, &decoder.name, bytes, endian, &decoder_params) {
                 Ok(mut vals) => results.append(&mut vals),
                 Err(e) => {
                     results.push(DecodedValue {
@@ -121,6 +178,7 @@ end
         name: &str,
         bytes: &[u8],
         endian: Endian,
+        params: &[(String, String)],
     ) -> LuaResult<Vec<DecodedValue>> {
         let source = std::fs::read_to_string(path)
             .map_err(|e| mlua::Error::external(format!("Failed to read {}: {}", name, e)))?;
@@ -138,7 +196,13 @@ end
 
             let endian_str = endian.label();
 
-            let result: Value = decode_fn.call((bytes_table, endian_str))?;
+            // Build params table
+            let params_table = self.lua.create_table()?;
+            for (k, v) in params {
+                params_table.set(k.as_str(), v.as_str())?;
+            }
+
+            let result: Value = decode_fn.call((bytes_table, endian_str, params_table))?;
 
             let mut decoded = Vec::new();
 

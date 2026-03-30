@@ -62,13 +62,15 @@ fn main() -> io::Result<()> {
     let mut wasm_mgr = WasmDecoderManager::new();
     wasm_mgr.load_decoders();
 
-    // Register all decoders in app for settings UI
-    app.register_decoder("Built-in".to_string(), DecoderSource::Builtin);
+    // Register all decoders in app for settings UI (with params)
+    app.register_decoder("Built-in".to_string(), DecoderSource::Builtin, Vec::new());
     for name in lua_mgr.decoder_names() {
-        app.register_decoder(name, DecoderSource::Lua);
+        let params = lua_mgr.query_params(&name);
+        app.register_decoder(name, DecoderSource::Lua, params);
     }
     for name in wasm_mgr.decoder_names() {
-        app.register_decoder(name, DecoderSource::Wasm);
+        let params = wasm_mgr.query_params(&name);
+        app.register_decoder(name, DecoderSource::Wasm, params);
     }
 
     // Setup terminal

@@ -18,14 +18,35 @@ pub enum InputMode {
     GotoOffset,
     Help,
     DecoderSettings,
+    ParamEdit,
 }
 
-/// Tracks an individual decoder's name, source, and enabled state.
+/// Describes the type of a decoder parameter.
+#[derive(Clone, PartialEq, Eq)]
+pub enum ParamType {
+    String,
+    Int,
+    Bool,
+    /// A fixed set of choices.
+    Choice(Vec<String>),
+}
+
+/// A single configurable parameter for a decoder.
+#[derive(Clone)]
+pub struct DecoderParam {
+    pub name: String,
+    pub param_type: ParamType,
+    pub default: String,
+    pub value: String,
+}
+
+/// Tracks an individual decoder's name, source, enabled state, and params.
 #[derive(Clone)]
 pub struct DecoderInfo {
     pub name: String,
     pub source: DecoderSource,
     pub enabled: bool,
+    pub params: Vec<DecoderParam>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -72,7 +93,8 @@ pub struct App {
 
     // Decoder settings
     pub decoders: Vec<DecoderInfo>,       // all registered decoders
-    pub decoder_settings_cursor: usize,   // cursor in settings popup
+    pub decoder_settings_cursor: usize,   // cursor in flattened settings list
+    pub param_edit_input: String,         // buffer for param editing
 }
 
 impl App {
@@ -102,16 +124,57 @@ impl App {
             decode_area: None,
             decoders: Vec::new(),
             decoder_settings_cursor: 0,
+            param_edit_input: String::new(),
         }
     }
 
     /// Register a decoder. Called during init from main.rs.
-    pub fn register_decoder(&mut self, name: String, source: DecoderSource) {
+    pub fn register_decoder(&mut self, name: String, source: DecoderSource, params: Vec<DecoderParam>) {
         self.decoders.push(DecoderInfo {
             name,
             source,
             enabled: true,
+            params,
         });
+    }
+
+    /// Get the current param values for a decoder, as (name, value) pairs.
+    pub fn decoder_params(&self, name: &str, source: &DecoderSource) -> Vec<(String, String)> {
+        self.decoders
+            .iter()
+            .find(|d| d.name == name && d.source == *source)
+            .map(|d| {
+                d.params
+                    .iter()
+                    .map(|p| (p.name.clone(), p.value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Total number of rows in the settings flat list.
+    /// Each decoder = 1 row (toggle) + N param rows.
+    pub fn settings_row_count(&self) -> usize {
+        self.decoders.iter().map(|d| 1 + d.params.len()).sum()
+    }
+
+    /// Map flat cursor position to (decoder_index, Option<param_index>).
+    /// Returns None if cursor is out of range.
+    pub fn settings_cursor_target(&self) -> Option<(usize, Option<usize>)> {
+        let mut pos = 0;
+        for (di, decoder) in self.decoders.iter().enumerate() {
+            if self.decoder_settings_cursor == pos {
+                return Some((di, None));
+            }
+            pos += 1;
+            for pi in 0..decoder.params.len() {
+                if self.decoder_settings_cursor == pos {
+                    return Some((di, Some(pi)));
+                }
+                pos += 1;
+            }
+        }
+        None
     }
 
     /// Check if a decoder with the given name and source is enabled.
@@ -182,6 +245,7 @@ impl App {
                 self.input_mode = InputMode::Normal;
             }
             InputMode::DecoderSettings => self.handle_decoder_settings_key(key),
+            InputMode::ParamEdit => self.handle_param_edit_key(key),
             InputMode::GotoOffset => self.handle_goto_key(key),
             InputMode::Normal | InputMode::Selecting => self.handle_normal_key(key),
         }
@@ -208,6 +272,7 @@ impl App {
     }
 
     fn handle_decoder_settings_key(&mut self, key: KeyEvent) {
+        let row_count = self.settings_row_count();
         match key.code {
             KeyCode::Esc | KeyCode::Char('d') | KeyCode::Char('q') => {
                 self.input_mode = InputMode::Normal;
@@ -218,16 +283,89 @@ impl App {
                 }
             }
             KeyCode::Down => {
-                if !self.decoders.is_empty()
-                    && self.decoder_settings_cursor < self.decoders.len() - 1
-                {
+                if row_count > 0 && self.decoder_settings_cursor < row_count - 1 {
                     self.decoder_settings_cursor += 1;
                 }
             }
-            KeyCode::Char(' ') | KeyCode::Enter => {
-                if let Some(decoder) = self.decoders.get_mut(self.decoder_settings_cursor) {
-                    decoder.enabled = !decoder.enabled;
+            KeyCode::Char(' ') => {
+                // Space toggles decoder enable or bool params
+                if let Some((di, param)) = self.settings_cursor_target() {
+                    match param {
+                        None => {
+                            self.decoders[di].enabled = !self.decoders[di].enabled;
+                        }
+                        Some(pi) => {
+                            if self.decoders[di].params[pi].param_type == ParamType::Bool {
+                                let v = &self.decoders[di].params[pi].value;
+                                self.decoders[di].params[pi].value =
+                                    if v == "true" { "false" } else { "true" }.to_string();
+                            }
+                        }
+                    }
                 }
+            }
+            KeyCode::Enter => {
+                // Enter toggles decoder or opens param editing
+                if let Some((di, param)) = self.settings_cursor_target() {
+                    match param {
+                        None => {
+                            self.decoders[di].enabled = !self.decoders[di].enabled;
+                        }
+                        Some(pi) => {
+                            let p = &self.decoders[di].params[pi];
+                            match &p.param_type {
+                                ParamType::Bool => {
+                                    let v = &self.decoders[di].params[pi].value;
+                                    self.decoders[di].params[pi].value =
+                                        if v == "true" { "false" } else { "true" }.to_string();
+                                }
+                                ParamType::Choice(choices) => {
+                                    // Cycle to next choice
+                                    let current = &self.decoders[di].params[pi].value;
+                                    let idx = choices.iter().position(|c| c == current).unwrap_or(0);
+                                    let next = (idx + 1) % choices.len();
+                                    self.decoders[di].params[pi].value = choices[next].clone();
+                                }
+                                ParamType::String | ParamType::Int => {
+                                    self.param_edit_input = p.value.clone();
+                                    self.input_mode = InputMode::ParamEdit;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_param_edit_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.input_mode = InputMode::DecoderSettings;
+                self.param_edit_input.clear();
+            }
+            KeyCode::Enter => {
+                // Apply the edited value
+                if let Some((di, Some(pi))) = self.settings_cursor_target() {
+                    let p = &self.decoders[di].params[pi];
+                    // Validate int params
+                    if p.param_type == ParamType::Int {
+                        if self.param_edit_input.parse::<i64>().is_ok() || self.param_edit_input.is_empty() {
+                            self.decoders[di].params[pi].value = self.param_edit_input.clone();
+                        }
+                    } else {
+                        self.decoders[di].params[pi].value = self.param_edit_input.clone();
+                    }
+                }
+                self.input_mode = InputMode::DecoderSettings;
+                self.param_edit_input.clear();
+            }
+            KeyCode::Backspace => {
+                self.param_edit_input.pop();
+            }
+            KeyCode::Char(c) => {
+                self.param_edit_input.push(c);
             }
             _ => {}
         }
@@ -361,9 +499,11 @@ impl App {
             }
             KeyCode::Tab => {
                 self.focus_next_decode_entry();
+                self.ensure_focused_range_visible();
             }
             KeyCode::BackTab => {
                 self.focus_prev_decode_entry();
+                self.ensure_focused_range_visible();
             }
             KeyCode::Esc => {
                 if self.decode_focus.is_some() {
@@ -528,6 +668,18 @@ impl App {
             self.scroll_offset = cursor_row;
         } else if cursor_row >= self.scroll_offset + self.visible_rows {
             self.scroll_offset = cursor_row - self.visible_rows + 1;
+        }
+    }
+
+    fn ensure_focused_range_visible(&mut self) {
+        if let Some((start, end)) = self.focused_range() {
+            let start_row = start / self.bytes_per_row;
+            let end_row = end / self.bytes_per_row;
+            if start_row < self.scroll_offset {
+                self.scroll_offset = start_row;
+            } else if end_row >= self.scroll_offset + self.visible_rows {
+                self.scroll_offset = end_row.saturating_sub(self.visible_rows - 1);
+            }
         }
     }
 }
