@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{Block, Widget},
 };
 
-use crate::app::{App, BYTES_PER_ROW};
+use crate::app::App;
 use crate::decode::RANGE_COLORS;
 
 pub struct HexView<'a> {
@@ -43,7 +43,7 @@ impl Widget for HexView<'_> {
 
         for row_idx in 0..inner.height as usize {
             let file_row = self.app.scroll_offset + row_idx;
-            let row_start = file_row * BYTES_PER_ROW;
+            let row_start = file_row * self.app.bytes_per_row;
 
             if row_start >= data.len() {
                 break;
@@ -69,10 +69,10 @@ impl Widget for HexView<'_> {
             }
 
             // Hex bytes
-            let row_end = (row_start + BYTES_PER_ROW).min(data.len());
+            let row_end = (row_start + self.app.bytes_per_row).min(data.len());
             let bracket_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
 
-            for i in 0..BYTES_PER_ROW {
+            for i in 0..self.app.bytes_per_row {
                 let byte_offset = row_start + i;
                 let is_focus_start = focused_range.is_some_and(|(s, _)| byte_offset == s);
                 let is_focus_end = focused_range.is_some_and(|(_, e)| byte_offset == e);
@@ -130,7 +130,7 @@ impl Widget for HexView<'_> {
                     }
                 }
 
-                if i == 7 {
+                if i > 0 && i < self.app.bytes_per_row - 1 && (i + 1) % 8 == 0 {
                     if x < inner.x + inner.width {
                         buf.cell_mut((x, y)).map(|cell| {
                             cell.set_char(' ');
@@ -149,7 +149,7 @@ impl Widget for HexView<'_> {
             }
 
             // ASCII column
-            for i in 0..BYTES_PER_ROW {
+            for i in 0..self.app.bytes_per_row {
                 let byte_offset = row_start + i;
                 if byte_offset < row_end {
                     let byte_val = data[byte_offset];

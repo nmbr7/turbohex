@@ -33,6 +33,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderManager, w
     let hex_area = body_layout[0];
     let decode_area = body_layout[1];
 
+    // Store areas for mouse hit testing
+    app.hex_area = Some(hex_area);
+    app.decode_area = Some(decode_area);
+
     // Update visible rows
     // Account for block borders (2 rows)
     app.visible_rows = hex_area.height.saturating_sub(2) as usize;
@@ -210,7 +214,16 @@ fn draw_decode_panel(frame: &mut Frame, app: &mut App, lua_mgr: &mut LuaDecoderM
     // Cache entries in app for hex_view to read
     app.decode_entries = all_entries;
 
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    // Clamp scroll offset to content
+    let max_scroll = lines.len().saturating_sub(1);
+    if app.decode_scroll_offset > max_scroll {
+        app.decode_scroll_offset = max_scroll;
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.decode_scroll_offset as u16, 0));
     frame.render_widget(paragraph, area);
 }
 
@@ -299,7 +312,8 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
             ("b", "Toggle byte / bit selection mode"),
             ("e", "Toggle little-endian / big-endian"),
         ]),
-        ("Panels", &[
+        ("Layout", &[
+            ("w", "Toggle 16 / 32 bytes per row"),
             ("[  /  ]", "Shrink / grow decode panel"),
         ]),
         ("Decoders", &[

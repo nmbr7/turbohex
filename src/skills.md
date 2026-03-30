@@ -237,6 +237,13 @@ cp my_decoder.wasm ~/.config/turbohex/decoders/
 | `b` | Toggle byte / bit selection mode    |
 | `e` | Toggle little-endian / big-endian   |
 
+### Layout
+
+| Key     | Action                           |
+|---------|----------------------------------|
+| `w`     | Toggle 16 / 32 bytes per row    |
+| `[ / ]` | Shrink / grow decode panel width |
+
 ### Decode Panel
 
 | Key           | Action                            |
@@ -244,7 +251,6 @@ cp my_decoder.wasm ~/.config/turbohex/decoders/
 | `d`           | Open decoder settings (enable/disable) |
 | `Tab`         | Focus next decoded field          |
 | `Shift+Tab`   | Focus previous decoded field      |
-| `[ / ]`       | Shrink / grow decode panel width  |
 
 ### Other
 

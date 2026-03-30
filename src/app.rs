@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::decode::{DecodedValue, Endian, RANGE_COLORS};
 use crate::file_buffer::FileBuffer;
 
-pub const BYTES_PER_ROW: usize = 16;
+pub const DEFAULT_BYTES_PER_ROW: usize = 16;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SelectionMode {
@@ -54,12 +54,21 @@ pub struct App {
     pub bit_selection_anchor: Option<usize>,
     pub bit_selection_end: Option<usize>,
 
+    // Layout
+    pub bytes_per_row: usize,    // 16 or 32
     // Panel sizing
     pub decode_panel_width: u16, // right panel width in columns
 
     // Decode panel focus: which entry is highlighted for range coloring
     pub decode_entries: Vec<DecodedValue>, // cached decode results (set by ui.rs each frame)
     pub decode_focus: Option<usize>,       // index into decode_entries (None = no focus)
+
+    // Decode panel scrolling
+    pub decode_scroll_offset: usize,
+
+    // Layout areas (set by ui.rs each frame, used for mouse hit testing)
+    pub hex_area: Option<ratatui::layout::Rect>,
+    pub decode_area: Option<ratatui::layout::Rect>,
 
     // Decoder settings
     pub decoders: Vec<DecoderInfo>,       // all registered decoders
@@ -84,9 +93,13 @@ impl App {
             bit_cursor: 0,
             bit_selection_anchor: None,
             bit_selection_end: None,
+            bytes_per_row: DEFAULT_BYTES_PER_ROW,
             decode_panel_width: 180,
             decode_entries: Vec::new(),
             decode_focus: None,
+            decode_scroll_offset: 0,
+            hex_area: None,
+            decode_area: None,
             decoders: Vec::new(),
             decoder_settings_cursor: 0,
         }
@@ -124,7 +137,7 @@ impl App {
     }
 
     pub fn total_rows(&self) -> usize {
-        (self.file_len() + BYTES_PER_ROW - 1) / BYTES_PER_ROW
+        (self.file_len() + self.bytes_per_row - 1) / self.bytes_per_row
     }
 
     /// Returns (start, end) of the selected byte range (inclusive)
@@ -302,6 +315,10 @@ impl App {
                 self.input_mode = InputMode::DecoderSettings;
                 self.decoder_settings_cursor = 0;
             }
+            KeyCode::Char('w') => {
+                self.bytes_per_row = if self.bytes_per_row == 16 { 32 } else { 16 };
+                self.ensure_cursor_visible();
+            }
             KeyCode::Char('[') => {
                 self.decode_panel_width = self.decode_panel_width.saturating_sub(2).max(20);
             }
@@ -310,16 +327,16 @@ impl App {
             }
             KeyCode::Left => self.move_cursor(-1),
             KeyCode::Right => self.move_cursor(1),
-            KeyCode::Up if shift => self.move_cursor(-(50 * BYTES_PER_ROW as isize)),
-            KeyCode::Down if shift => self.move_cursor(50 * BYTES_PER_ROW as isize),
-            KeyCode::Up => self.move_cursor(-(BYTES_PER_ROW as isize)),
-            KeyCode::Down => self.move_cursor(BYTES_PER_ROW as isize),
+            KeyCode::Up if shift => self.move_cursor(-(50 * self.bytes_per_row as isize)),
+            KeyCode::Down if shift => self.move_cursor(50 * self.bytes_per_row as isize),
+            KeyCode::Up => self.move_cursor(-(self.bytes_per_row as isize)),
+            KeyCode::Down => self.move_cursor(self.bytes_per_row as isize),
             KeyCode::PageUp => {
-                let jump = self.visible_rows.saturating_sub(1) * BYTES_PER_ROW;
+                let jump = self.visible_rows.saturating_sub(1) * self.bytes_per_row;
                 self.move_cursor(-(jump as isize));
             }
             KeyCode::PageDown => {
-                let jump = self.visible_rows.saturating_sub(1) * BYTES_PER_ROW;
+                let jump = self.visible_rows.saturating_sub(1) * self.bytes_per_row;
                 self.move_cursor(jump as isize);
             }
             KeyCode::Home => {
@@ -506,7 +523,7 @@ impl App {
     }
 
     fn ensure_cursor_visible(&mut self) {
-        let cursor_row = self.cursor / BYTES_PER_ROW;
+        let cursor_row = self.cursor / self.bytes_per_row;
         if cursor_row < self.scroll_offset {
             self.scroll_offset = cursor_row;
         } else if cursor_row >= self.scroll_offset + self.visible_rows {
