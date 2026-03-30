@@ -18,7 +18,8 @@ cargo run -- <file>
 cargo install --path .
 turbohex <file>
 ```
-<img width="5100" height="2612" alt="image" src="https://github.com/user-attachments/assets/59d32ad0-e5ae-4690-bbed-5623aa459419" />
+<img width="2842" height="1678" alt="image" src="https://github.com/user-attachments/assets/c575f3bd-0ba8-4324-92b2-c48ea8bdb400" />
+Postgres heap page example
 
 ## Features
 
