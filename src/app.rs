@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::decode::{DecodedValue, Endian, RANGE_COLORS};
 use crate::file_buffer::FileBuffer;
@@ -237,7 +237,6 @@ impl App {
             if off < self.file_len() {
                 self.cursor = off;
                 self.bit_cursor = off * 8;
-                self.clear_selection();
                 self.input_mode = InputMode::Normal;
                 self.ensure_cursor_visible();
             }
@@ -245,6 +244,8 @@ impl App {
     }
 
     fn handle_normal_key(&mut self, key: KeyEvent) {
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => {
                 self.quit = true;
@@ -309,6 +310,8 @@ impl App {
             }
             KeyCode::Left => self.move_cursor(-1),
             KeyCode::Right => self.move_cursor(1),
+            KeyCode::Up if shift => self.move_cursor(-(50 * BYTES_PER_ROW as isize)),
+            KeyCode::Down if shift => self.move_cursor(50 * BYTES_PER_ROW as isize),
             KeyCode::Up => self.move_cursor(-(BYTES_PER_ROW as isize)),
             KeyCode::Down => self.move_cursor(BYTES_PER_ROW as isize),
             KeyCode::PageUp => {

@@ -236,7 +236,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         InputMode::Normal | InputMode::Selecting | InputMode::Help | InputMode::DecoderSettings => {
             let mut spans = vec![
                 Span::styled(
-                    format!(" Offset: 0x{:08X}", app.cursor),
+                    format!(" Offset: 0x{:08X} ({})", app.cursor, app.cursor),
                     Style::default().fg(Color::Cyan),
                 ),
                 Span::styled("  │  ", Style::default().fg(Color::DarkGray)),

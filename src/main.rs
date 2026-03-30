@@ -26,17 +26,31 @@ use file_buffer::FileBuffer;
 #[derive(Parser)]
 #[command(name = "turbohex")]
 #[command(about = "Interactive TUI hex viewer with decode panel")]
+#[command(after_help = "Use --skills to print the decoder plugin development guide")]
 struct Cli {
     /// File to view
-    file: PathBuf,
+    file: Option<PathBuf>,
+
+    /// Print decoder plugin development guide (markdown)
+    #[arg(long)]
+    skills: bool,
 }
 
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
-    let buffer = FileBuffer::open(&cli.file)?;
-    let filename = cli
-        .file
+    if cli.skills {
+        print!("{}", include_str!("skills.md"));
+        return Ok(());
+    }
+
+    let file = cli.file.unwrap_or_else(|| {
+        eprintln!("error: a file argument is required\n\nUsage: turbohex <FILE>\n\nFor more information, try '--help'.");
+        std::process::exit(1);
+    });
+
+    let buffer = FileBuffer::open(&file)?;
+    let filename = file
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
