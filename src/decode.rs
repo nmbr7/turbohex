@@ -234,6 +234,15 @@ pub fn decode_selection(bytes: &[u8], endian: Endian) -> Vec<DecodedValue> {
     results.push(DecodedValue::new("", "")); // spacer
     results.push(DecodedValue::new("Length", format!("{} bytes", bytes.len())));
 
+    // Entropy & sparsity stats
+    if bytes.len() >= 2 {
+        let stats = byte_stats(bytes);
+        results.push(DecodedValue::new("Entropy", stats.entropy_display()));
+        results.push(DecodedValue::new("Compress", stats.compress_display()));
+        results.push(DecodedValue::new("Sparsity", stats.sparsity_display()));
+        results.push(DecodedValue::new("Unique", stats.unique_display()));
+    }
+
     results
 }
 
@@ -321,6 +330,101 @@ fn read_u64(bytes: &[u8], endian: Endian) -> u64 {
     match endian {
         Endian::Little => u64::from_le_bytes(b),
         Endian::Big => u64::from_be_bytes(b),
+    }
+}
+
+// --- Entropy & byte statistics ---
+
+pub struct ByteStats {
+    pub entropy: f64,
+    pub null_count: usize,
+    pub printable_count: usize,
+    pub unique_count: usize,
+    pub total: usize,
+}
+
+impl ByteStats {
+    pub fn entropy_display(&self) -> String {
+        let bar = entropy_bar(self.entropy);
+        let label = entropy_label(self.entropy);
+        format!("{} {:.2} bits/byte ({})", bar, self.entropy, label)
+    }
+
+    pub fn compress_display(&self) -> String {
+        // Theoretical lower bound: entropy/8 of original size
+        let ratio = if self.entropy > 0.0 { self.entropy / 8.0 } else { 0.0 };
+        let reducible = ((1.0 - ratio) * 100.0) as u32;
+        format!("~{}% reducible", reducible)
+    }
+
+    pub fn sparsity_display(&self) -> String {
+        let pct = if self.total > 0 {
+            (self.null_count as f64 / self.total as f64 * 100.0) as u32
+        } else {
+            0
+        };
+        format!("{}/{} null bytes ({}%)", self.null_count, self.total, pct)
+    }
+
+    pub fn unique_display(&self) -> String {
+        format!("{}/256 distinct byte values", self.unique_count)
+    }
+}
+
+pub fn byte_stats(bytes: &[u8]) -> ByteStats {
+    let total = bytes.len();
+    let mut counts = [0u32; 256];
+    let mut null_count = 0usize;
+    let mut printable_count = 0usize;
+
+    for &b in bytes {
+        counts[b as usize] += 1;
+        if b == 0 {
+            null_count += 1;
+        }
+        if b >= 0x20 && b <= 0x7e {
+            printable_count += 1;
+        }
+    }
+
+    let unique_count = counts.iter().filter(|&&c| c > 0).count();
+
+    let entropy = if total > 0 {
+        let len_f = total as f64;
+        let mut h = 0.0f64;
+        for &c in &counts {
+            if c > 0 {
+                let p = c as f64 / len_f;
+                h -= p * p.log2();
+            }
+        }
+        h
+    } else {
+        0.0
+    };
+
+    ByteStats { entropy, null_count, printable_count, unique_count, total }
+}
+
+fn entropy_bar(entropy: f64) -> String {
+    // 8 chars wide, filled proportionally to entropy/8.0
+    let filled = ((entropy / 8.0) * 8.0).round() as usize;
+    let filled = filled.min(8);
+    let empty = 8 - filled;
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+fn entropy_label(entropy: f64) -> &'static str {
+    if entropy > 7.5 {
+        "compressed/encrypted"
+    } else if entropy > 6.0 {
+        "high - binary/compiled"
+    } else if entropy > 4.0 {
+        "medium - structured"
+    } else if entropy > 2.0 {
+        "low - repetitive"
+    } else {
+        "very low - sparse/uniform"
     }
 }
 
