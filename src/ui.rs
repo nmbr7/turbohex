@@ -245,7 +245,8 @@ fn draw_decode_panel(
                                 info_style,
                             )));
                             lines.push(Line::from(Span::styled(
-                                format!("      {} | {} null | {}/256 unique",
+                                format!(
+                                    "      {} | {} null | {}/256 unique",
                                     stats.compress_display(),
                                     stats.null_count,
                                     stats.unique_count,

@@ -11,6 +11,7 @@ cargo build              # dev build
 cargo build --release    # release build
 cargo run -- <file>      # run with a file
 cargo run -- sample.json # test with included sample
+turbohex --skills        # print decoder plugin development guide for LLM agents
 ```
 
 ## Architecture
@@ -25,6 +26,7 @@ src/
   decoder_lua.rs    Loads .lua files from ~/.config/turbohex/decoders/ via mlua
   decoder_wasm.rs   Loads .wasm files from ~/.config/turbohex/decoders/ via wasmtime
   file_buffer.rs    File loading: mmap (>1MB) or Vec<u8> (small files)
+  skills.md         Printed by `turbohex --skills`; decoder ABI + examples for agent workflows
 
 examples/
   wasm-decoder-rust/  Rust WASM decoder example (file magic, entropy, byte stats)
@@ -37,6 +39,7 @@ examples/
 - **Decode panel** auto-updates on selection change, shows all interpretations at once.
 - **WASM ABI**: modules export `alloc(i32)->i32` and `decode(ptr,len,endian)->i32` returning NUL-terminated JSON `[{"label":"...","value":"..."}]`. No WASI needed.
 - **Lua ABI**: `decode(bytes_table, endian_string)` returns `{{label=..., value=...}}`.
+- **Agent setup docs**: `turbohex --skills` prints an LLM-friendly decoder development guide.
 - **Config path**: `~/.config/turbohex/decoders/` for both `.lua` and `.wasm` decoder plugins.
 
 ## Dependencies
