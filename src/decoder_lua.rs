@@ -1,4 +1,4 @@
-use mlua::{Lua, Result as LuaResult, Value};
+use mlua::{Lua, Result as LuaResult, StdLib, Value};
 use std::path::PathBuf;
 
 use crate::app::{DecoderParam, ParamType};
@@ -18,7 +18,13 @@ pub struct LuaDecoderManager {
 impl LuaDecoderManager {
     pub fn new() -> Self {
         Self {
-            lua: Lua::new(),
+            // Sandbox: only load safe computation libraries.
+            // Excludes io, os, package, debug, coroutine to prevent
+            // filesystem access, command execution, and module loading.
+            lua: Lua::new_with(
+                StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH,
+                mlua::LuaOptions::default(),
+            ).expect("Failed to create sandboxed Lua state"),
             decoders: Vec::new(),
             loaded: false,
         }

@@ -2,6 +2,22 @@
 name = "turbohex"
 version = "0.1.0"
 edition = "2024"
+description = "Interactive terminal hex-viewer with plugin-based decoders"
+readme = "README.md"
+repository = "https://github.com/nmbr7/turbohex"
+homepage = "https://github.com/nmbr7/turbohex"
+documentation = "https://docs.rs/turbohex"
+keywords = ["hex", "hexviewer", "tui", "binary", "wasm", "cli"]
+categories = [
+  "command-line-utilities::hexviewer",
+  "command-line-interface",
+  "development-tools::debugging",
+  "development-tools::hexviewer",
+  "visualization::hexviewer",
+  "encoding",
+  "webassembly",
+]
+
 
 [dependencies]
 clap = { version = "4.6.0", features = ["derive"] }

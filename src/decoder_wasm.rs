@@ -30,7 +30,9 @@ pub struct WasmDecoderManager {
 
 impl WasmDecoderManager {
     pub fn new() -> Self {
-        let engine = Engine::default();
+        let mut config = Config::new();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config).expect("Failed to create WASM engine");
         Self {
             engine,
             decoders: Vec::new(),
@@ -85,6 +87,7 @@ impl WasmDecoderManager {
             None => return Vec::new(),
         };
         let mut store = Store::new(&self.engine, ());
+        store.set_fuel(1_000_000).ok();
         let instance = match Instance::new(&mut store, &decoder.module, &[]) {
             Ok(i) => i,
             Err(_) => return Vec::new(),
@@ -152,6 +155,7 @@ impl WasmDecoderManager {
     ) -> anyhow::Result<Vec<DecodedValue>> {
         let decoder = &self.decoders[idx];
         let mut store = Store::new(&self.engine, ());
+        store.set_fuel(10_000_000)?; // prevent infinite loops
         let instance = Instance::new(&mut store, &decoder.module, &[])?;
 
         let memory = instance
@@ -167,8 +171,18 @@ impl WasmDecoderManager {
             .map_err(|e| anyhow::anyhow!("{}: missing 'decode' export: {}", decoder.name, e))?;
 
         // Allocate space for input bytes and copy them in
-        let input_ptr = alloc_fn.call(&mut store, bytes.len() as i32)?;
-        memory.data_mut(&mut store)[input_ptr as usize..input_ptr as usize + bytes.len()]
+        let input_len = i32::try_from(bytes.len())
+            .map_err(|_| anyhow::anyhow!("{}: input too large for WASM i32", decoder.name))?;
+        let input_ptr = alloc_fn.call(&mut store, input_len)?;
+        if input_ptr < 0 {
+            return Err(anyhow::anyhow!("{}: alloc returned negative pointer", decoder.name));
+        }
+        let ptr = input_ptr as usize;
+        let mem_len = memory.data(&store).len();
+        if ptr.saturating_add(bytes.len()) > mem_len {
+            return Err(anyhow::anyhow!("{}: alloc returned out-of-bounds pointer", decoder.name));
+        }
+        memory.data_mut(&mut store)[ptr..ptr + bytes.len()]
             .copy_from_slice(bytes);
 
         let endian_val = match endian {
