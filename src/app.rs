@@ -78,7 +78,7 @@ pub struct App {
     // Layout
     pub bytes_per_row: usize,    // 16 or 32
     // Panel sizing
-    pub decode_panel_width: u16, // right panel width in columns
+    pub decode_panel_pct: u16, // right panel width as percentage (10-90)
 
     // Decode panel focus: which entry is highlighted for range coloring
     pub decode_entries: Vec<DecodedValue>, // cached decode results (set by ui.rs each frame)
@@ -90,11 +90,16 @@ pub struct App {
     // Layout areas (set by ui.rs each frame, used for mouse hit testing)
     pub hex_area: Option<ratatui::layout::Rect>,
     pub decode_area: Option<ratatui::layout::Rect>,
+    pub stats_area: Option<ratatui::layout::Rect>,
 
     // Decoder settings
     pub decoders: Vec<DecoderInfo>,       // all registered decoders
     pub decoder_settings_cursor: usize,   // cursor in flattened settings list
     pub param_edit_input: String,         // buffer for param editing
+
+    // Stats panel
+    pub show_stats_panel: bool,
+    pub stats_scroll_offset: usize,
 }
 
 impl App {
@@ -116,15 +121,18 @@ impl App {
             bit_selection_anchor: None,
             bit_selection_end: None,
             bytes_per_row: DEFAULT_BYTES_PER_ROW,
-            decode_panel_width: 180,
+            decode_panel_pct: 50,
             decode_entries: Vec::new(),
             decode_focus: None,
             decode_scroll_offset: 0,
             hex_area: None,
             decode_area: None,
+            stats_area: None,
             decoders: Vec::new(),
             decoder_settings_cursor: 0,
             param_edit_input: String::new(),
+            show_stats_panel: false,
+            stats_scroll_offset: 0,
         }
     }
 
@@ -453,15 +461,29 @@ impl App {
                 self.input_mode = InputMode::DecoderSettings;
                 self.decoder_settings_cursor = 0;
             }
+            KeyCode::Char('s') => {
+                self.show_stats_panel = !self.show_stats_panel;
+                self.stats_scroll_offset = 0;
+            }
             KeyCode::Char('w') => {
                 self.bytes_per_row = if self.bytes_per_row == 16 { 32 } else { 16 };
                 self.ensure_cursor_visible();
             }
             KeyCode::Char('[') => {
-                self.decode_panel_width = self.decode_panel_width.saturating_sub(2).max(20);
+                self.decode_panel_pct = self.decode_panel_pct.saturating_sub(5).max(10);
             }
             KeyCode::Char(']') => {
-                self.decode_panel_width = (self.decode_panel_width + 2).min(180);
+                self.decode_panel_pct = (self.decode_panel_pct + 5).min(90);
+            }
+            KeyCode::Char('{') => {
+                if self.show_stats_panel {
+                    self.stats_scroll_offset = self.stats_scroll_offset.saturating_sub(3);
+                }
+            }
+            KeyCode::Char('}') => {
+                if self.show_stats_panel {
+                    self.stats_scroll_offset += 3;
+                }
             }
             KeyCode::Left => self.move_cursor(-1),
             KeyCode::Right => self.move_cursor(1),

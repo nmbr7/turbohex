@@ -33,17 +33,29 @@ pub fn draw(
     let body_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Min(20),
-            Constraint::Length(app.decode_panel_width),
+            Constraint::Percentage(100 - app.decode_panel_pct),
+            Constraint::Percentage(app.decode_panel_pct),
         ])
         .split(body);
 
     let hex_area = body_layout[0];
-    let decode_area = body_layout[1];
+    let right_area = body_layout[1];
+
+    // Split right panel: decode on top, stats on bottom (when toggled)
+    let (decode_area, stats_area) = if app.show_stats_panel {
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(right_area);
+        (split[0], Some(split[1]))
+    } else {
+        (right_area, None)
+    };
 
     // Store areas for mouse hit testing
     app.hex_area = Some(hex_area);
     app.decode_area = Some(decode_area);
+    app.stats_area = stats_area;
 
     // Update visible rows
     // Account for block borders (2 rows)
@@ -51,6 +63,11 @@ pub fn draw(
 
     // Decode panel (must run before hex view so decode_entries is populated for range highlights)
     draw_decode_panel(frame, app, lua_mgr, wasm_mgr, decode_area);
+
+    // Stats panel (needs decode_entries populated)
+    if let Some(stats_area) = stats_area {
+        draw_stats_panel(frame, app, stats_area);
+    }
 
     // Hex view
     let hex_block = Block::default()
@@ -231,31 +248,6 @@ fn draw_decode_panel(
                     Span::styled(format!("{:>10}: ", dv.label), label_style),
                     Span::styled(dv.value.clone(), value_style),
                 ]));
-
-                // Show entropy for the focused entry's byte range
-                if is_focused {
-                    if let Some((offset, length)) = dv.range {
-                        let selected = app.selected_bytes();
-                        if offset + length <= selected.len() && length >= 2 {
-                            let range_bytes = &selected[offset..offset + length];
-                            let stats = byte_stats(range_bytes);
-                            let info_style = Style::default().fg(Color::DarkGray);
-                            lines.push(Line::from(Span::styled(
-                                format!("      {}", stats.entropy_display()),
-                                info_style,
-                            )));
-                            lines.push(Line::from(Span::styled(
-                                format!(
-                                    "      {} | {} null | {}/256 unique",
-                                    stats.compress_display(),
-                                    stats.null_count,
-                                    stats.unique_count,
-                                ),
-                                info_style,
-                            )));
-                        }
-                    }
-                }
             }
             entry_idx += 1;
         }
@@ -411,6 +403,8 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
             &[
                 ("w", "Toggle 16 / 32 bytes per row"),
                 ("[  /  ]", "Shrink / grow decode panel"),
+                ("s", "Toggle stats panel"),
+                ("{  /  }", "Scroll stats panel up / down"),
             ],
         ),
         (
@@ -606,6 +600,146 @@ fn draw_decoder_settings(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(Clear, popup);
     frame.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+fn draw_stats_panel(frame: &mut Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .title(" Stats (s) ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(180, 140, 240)))
+        .padding(Padding::horizontal(1));
+
+    let selected = app.selected_bytes();
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header
+    lines.push(Line::from(vec![
+        Span::styled("  ", Style::default()),
+        Span::styled(
+            format!("{:<22} {:>10}  {:>8}  {:>6}  {:>7}",
+                "Field", "Entropy", "Compress", "Nulls", "Unique"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    // One row per decode entry that has a range
+    let mut stats_row = 0usize;
+    let mut focused_line: Option<usize> = None;
+    for (entry_idx, entry) in app.decode_entries.iter().enumerate() {
+        let (offset, length) = match entry.range {
+            Some(r) => r,
+            None => continue,
+        };
+
+        if offset + length > selected.len() || length == 0 {
+            stats_row += 1;
+            continue;
+        }
+
+        let range_bytes = &selected[offset..offset + length];
+        let is_focused = app.decode_focus == Some(entry_idx);
+        if is_focused {
+            focused_line = Some(lines.len());
+        }
+
+        // Color swatch
+        let swatch = if let Some(ci) = entry.color_index {
+            let (r, g, b) = RANGE_COLORS[ci];
+            Span::styled("█ ", Style::default().fg(Color::Rgb(r, g, b)))
+        } else {
+            Span::styled("  ", Style::default())
+        };
+
+        let label = if entry.label.len() > 20 {
+            format!("{:.20}", entry.label)
+        } else {
+            format!("{:<20}", entry.label)
+        };
+
+        if range_bytes.len() < 2 {
+            // Too small for meaningful entropy
+            let row_style = if is_focused {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(180, 140, 240))
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            lines.push(Line::from(vec![
+                swatch,
+                Span::styled(
+                    format!("{} {:>10}  {:>8}  {:>6}  {:>7}",
+                        label, "-", "-", "-", "-"),
+                    row_style,
+                ),
+            ]));
+        } else {
+            let stats = byte_stats(range_bytes);
+            let bar = entropy_bar_short(stats.entropy);
+            let compress = ((1.0 - stats.entropy / 8.0) * 100.0) as u32;
+
+            let row_style = if is_focused {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(180, 140, 240))
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            lines.push(Line::from(vec![
+                swatch,
+                Span::styled(
+                    format!("{} {} {:.2} b/B  ~{:>3}%↓  {:>5}  {:>3}/256",
+                        label, bar, stats.entropy, compress,
+                        stats.null_count, stats.unique_count),
+                    row_style,
+                ),
+            ]));
+        }
+
+        stats_row += 1;
+    }
+
+    if stats_row == 0 {
+        lines.push(Line::from(Span::styled(
+            "  No range-mapped entries",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    // Auto-scroll to keep focused entry visible
+    let inner_height = area.height.saturating_sub(2) as usize;
+    if let Some(fl) = focused_line {
+        if fl < app.stats_scroll_offset {
+            app.stats_scroll_offset = fl;
+        } else if fl >= app.stats_scroll_offset + inner_height {
+            app.stats_scroll_offset = fl.saturating_sub(inner_height - 1);
+        }
+    }
+
+    // Clamp scroll
+    let max_scroll = lines.len().saturating_sub(inner_height);
+    if app.stats_scroll_offset > max_scroll {
+        app.stats_scroll_offset = max_scroll;
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.stats_scroll_offset as u16, 0));
+    frame.render_widget(paragraph, area);
+}
+
+/// Short entropy bar (6 chars) for the stats panel table
+fn entropy_bar_short(entropy: f64) -> String {
+    let filled = ((entropy / 8.0) * 6.0).round() as usize;
+    let filled = filled.min(6);
+    let empty = 6 - filled;
+    format!("{}{}", "█".repeat(filled), "░".repeat(empty))
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

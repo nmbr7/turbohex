@@ -124,6 +124,13 @@ fn run_loop(
                                     app.decode_scroll_offset = app.decode_scroll_offset.saturating_sub(3);
                                 }
                             }
+                            if let Some(area) = app.stats_area {
+                                if col >= area.x && col < area.x + area.width
+                                    && row >= area.y && row < area.y + area.height
+                                {
+                                    app.stats_scroll_offset = app.stats_scroll_offset.saturating_sub(3);
+                                }
+                            }
                         }
                         MouseEventKind::ScrollDown => {
                             if let Some(area) = app.hex_area {
@@ -139,6 +146,13 @@ fn run_loop(
                                     && row >= area.y && row < area.y + area.height
                                 {
                                     app.decode_scroll_offset += 3;
+                                }
+                            }
+                            if let Some(area) = app.stats_area {
+                                if col >= area.x && col < area.x + area.width
+                                    && row >= area.y && row < area.y + area.height
+                                {
+                                    app.stats_scroll_offset += 3;
                                 }
                             }
                         }
