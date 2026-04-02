@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/flash-x.svg" alt="TurboHex logo" width="120" />
-</p>
-
 <h1 align="center">TurboHex</h1>
 
 [![Rust](https://img.shields.io/badge/Rust-stable-orange)](https://www.rust-lang.org/)
