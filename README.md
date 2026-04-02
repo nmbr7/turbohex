@@ -1,4 +1,15 @@
-# turbohex
+<p align="center">
+  <span aria-label="TurboHex logo" title="TurboHex logo" style="display:inline-flex;align-items:center;gap:10px;color:#0ea5e9;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="72" height="72" fill="currentColor"><path d="M434.8 54.1C446.7 62.7 451.1 78.3 445.7 91.9L367.3 288L512 288C525.5 288 537.5 296.4 542.1 309.1C546.7 321.8 542.8 336 532.5 344.6L244.5 584.6C233.2 594 217.1 594.5 205.2 585.9C193.3 577.3 188.9 561.7 194.3 548.1L272.7 352L128 352C114.5 352 102.5 343.6 97.9 330.9C93.3 318.2 97.2 304 107.5 295.4L395.5 55.4C406.8 46 422.9 45.5 434.8 54.1z"/></svg>
+    <span style="font-size:52px;font-weight:700;line-height:1;">#</span>
+  </span>
+</p>
+
+<h1 align="center">TurboHex</h1>
+
+<p align="center">
+  <img alt="TurboHex" src="https://img.shields.io/badge/TurboHex-Terminal%20Hex%20Viewer-0ea5e9?style=for-the-badge&labelColor=111827" />
+</p>
 
 [![Rust](https://img.shields.io/badge/Rust-stable-orange)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-blue)](#)
