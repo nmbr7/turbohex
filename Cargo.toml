@@ -11,8 +11,6 @@ license = "MIT"
 keywords = ["hexviewer", "tui", "binary", "wasm", "cli"]
 categories = [
   "command-line-utilities::hexviewer",
-  "command-line-interface",
-  "development-tools::debugging",
   "development-tools::hexviewer",
   "visualization::hexviewer",
   "encoding",
