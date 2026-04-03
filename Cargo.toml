@@ -7,6 +7,7 @@ readme = "README.md"
 repository = "https://github.com/nmbr7/turbohex"
 homepage = "https://github.com/nmbr7/turbohex"
 documentation = "https://docs.rs/turbohex"
+license = "MIT"
 keywords = ["hex", "hexviewer", "tui", "binary", "wasm", "cli"]
 categories = [
   "command-line-utilities::hexviewer",
