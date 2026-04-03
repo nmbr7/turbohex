@@ -60,18 +60,18 @@ native, decoder-driven analysis loops.
 
 ## Installation
 
-Prerequisite: Rust toolchain (`cargo`, `rustc`).
+### From crates.io
 
 ```sh
-# Build a release binary
-cargo build --release
+cargo install turbohex
+```
 
-# Run without installing
-./target/release/turbohex <file>
+### From source
 
-# Or install to your PATH
+```sh
+git clone https://github.com/nmbr7/turbohex.git
+cd turbohex
 cargo install --path .
-turbohex <file>
 ```
 
 ## Basic Usage
