@@ -10,11 +10,11 @@ documentation = "https://docs.rs/turbohex"
 license = "MIT"
 keywords = ["hexviewer", "tui", "binary", "wasm", "cli"]
 categories = [
-  "command-line-utilities::hexviewer",
-  "development-tools::hexviewer",
-  "visualization::hexviewer",
+  "command-line-utilities",
+  "development-tools::debugging",
+  "visualization",
   "encoding",
-  "webassembly",
+  "wasm",
 ]
 
 
