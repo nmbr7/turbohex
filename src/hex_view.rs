@@ -1,3 +1,10 @@
+//! Custom ratatui widget for the hex dump display.
+//!
+//! Renders a scrollable hex view with three columns: offset addresses,
+//! hex byte values, and ASCII representation. Supports color-coded bytes
+//! by category (null, whitespace, printable, 0xFF, other), selection
+//! highlighting, and range-based color overlays from decoder entries.
+
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -8,16 +15,34 @@ use ratatui::{
 use crate::app::App;
 use crate::decode::RANGE_COLORS;
 
+/// A ratatui widget that renders the hex view panel.
+///
+/// The widget reads from the [`App`] state to determine which rows to display
+/// (based on `scroll_offset` and `visible_rows`), how to highlight bytes
+/// (selection, range colors, focus), and the layout width (`bytes_per_row`).
+///
+/// # Layout
+///
+/// Each row is formatted as:
+/// ```text
+/// OFFSET:  HH HH HH ... HH  |ASCII...|
+/// ```
+///
+/// Groups of 8 bytes are separated by an extra space for readability.
 pub struct HexView<'a> {
+    /// Reference to the application state for data and display parameters.
     app: &'a App,
+    /// Optional border block wrapping the widget.
     block: Option<Block<'a>>,
 }
 
 impl<'a> HexView<'a> {
+    /// Creates a new `HexView` widget referencing the given application state.
     pub fn new(app: &'a App) -> Self {
         Self { app, block: None }
     }
 
+    /// Wraps the hex view in a bordered block with a title.
     pub fn block(mut self, block: Block<'a>) -> Self {
         self.block = block.into();
         self
@@ -39,8 +64,6 @@ impl Widget for HexView<'_> {
         let range_highlights = self.app.active_range_highlights();
         let focused_range = self.app.focused_range();
 
-        // Layout: OFFSET  HH HH HH ... HH  │ASCII...│
-
         for row_idx in 0..inner.height as usize {
             let file_row = self.app.scroll_offset + row_idx;
             let row_start = file_row * self.app.bytes_per_row;
@@ -56,7 +79,7 @@ impl Widget for HexView<'_> {
 
             let mut x = inner.x;
 
-            // Offset column
+            // Offset column (8-digit hex address)
             let offset_str = format!("{:08X}: ", row_start);
             let offset_style = Style::default().fg(Color::DarkGray);
             for ch in offset_str.chars() {
@@ -68,9 +91,11 @@ impl Widget for HexView<'_> {
                 }
             }
 
-            // Hex bytes
+            // Hex bytes column
             let row_end = (row_start + self.app.bytes_per_row).min(data.len());
-            let bracket_style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+            let bracket_style = Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD);
 
             for i in 0..self.app.bytes_per_row {
                 let byte_offset = row_start + i;
@@ -78,9 +103,7 @@ impl Widget for HexView<'_> {
                 let is_focus_end = focused_range.is_some_and(|(_, e)| byte_offset == e);
                 let in_focus = self.is_in_focused_range(byte_offset, &focused_range);
 
-                // Leading bracket: replace the space before this byte with '>'
-                // For the first byte in a row that starts a focused range,
-                // we need to go back and overwrite the previous separator space.
+                // Opening bracket for focused range start
                 if is_focus_start && x > inner.x {
                     buf.cell_mut((x - 1, y)).map(|cell| {
                         cell.set_char('[').set_style(bracket_style);
@@ -90,7 +113,14 @@ impl Widget for HexView<'_> {
                 if byte_offset < row_end {
                     let byte_val = data[byte_offset];
                     let hex = format!("{:02X}", byte_val);
-                    let style = self.byte_style(byte_offset, byte_val, sel_start, sel_end, &range_highlights, &focused_range);
+                    let style = self.byte_style(
+                        byte_offset,
+                        byte_val,
+                        sel_start,
+                        sel_end,
+                        &range_highlights,
+                        &focused_range,
+                    );
 
                     for ch in hex.chars() {
                         if x < inner.x + inner.width {
@@ -112,7 +142,7 @@ impl Widget for HexView<'_> {
                     }
                 }
 
-                // Trailing bracket: if this byte ends the focused range, put '<' in separator
+                // Closing bracket for focused range end
                 if is_focus_end && in_focus {
                     if x < inner.x + inner.width {
                         buf.cell_mut((x, y)).map(|cell| {
@@ -130,6 +160,7 @@ impl Widget for HexView<'_> {
                     }
                 }
 
+                // Extra space between groups of 8 bytes
                 if i > 0 && i < self.app.bytes_per_row - 1 && (i + 1) % 8 == 0 {
                     if x < inner.x + inner.width {
                         buf.cell_mut((x, y)).map(|cell| {
@@ -140,10 +171,11 @@ impl Widget for HexView<'_> {
                 }
             }
 
-            // Separator
+            // Separator between hex and ASCII columns
             if x < inner.x + inner.width {
                 buf.cell_mut((x, y)).map(|cell| {
-                    cell.set_char('│').set_style(Style::default().fg(Color::DarkGray));
+                    cell.set_char('\u{2502}')
+                        .set_style(Style::default().fg(Color::DarkGray));
                 });
                 x += 1;
             }
@@ -156,9 +188,16 @@ impl Widget for HexView<'_> {
                     let ch = if byte_val.is_ascii_graphic() || byte_val == b' ' {
                         byte_val as char
                     } else {
-                        '·'
+                        '\u{00B7}'
                     };
-                    let style = self.ascii_style(byte_offset, byte_val, sel_start, sel_end, &range_highlights, &focused_range);
+                    let style = self.ascii_style(
+                        byte_offset,
+                        byte_val,
+                        sel_start,
+                        sel_end,
+                        &range_highlights,
+                        &focused_range,
+                    );
                     if x < inner.x + inner.width {
                         buf.cell_mut((x, y)).map(|cell| {
                             cell.set_char(ch).set_style(style);
@@ -175,10 +214,11 @@ impl Widget for HexView<'_> {
                 }
             }
 
-            // Close ASCII
+            // Closing separator for ASCII column
             if x < inner.x + inner.width {
                 buf.cell_mut((x, y)).map(|cell| {
-                    cell.set_char('│').set_style(Style::default().fg(Color::DarkGray));
+                    cell.set_char('\u{2502}')
+                        .set_style(Style::default().fg(Color::DarkGray));
                 });
             }
         }
@@ -186,7 +226,15 @@ impl Widget for HexView<'_> {
 }
 
 impl HexView<'_> {
-    fn find_range_color(&self, offset: usize, highlights: &[(usize, usize, usize)]) -> Option<(u8, u8, u8)> {
+    /// Finds the color for a byte offset in the range highlight list.
+    ///
+    /// Returns the RGB color of the first matching range, or `None` if the
+    /// offset is not within any highlighted range.
+    fn find_range_color(
+        &self,
+        offset: usize,
+        highlights: &[(usize, usize, usize)],
+    ) -> Option<(u8, u8, u8)> {
         for &(start, end, color_idx) in highlights {
             if offset >= start && offset <= end {
                 return Some(RANGE_COLORS[color_idx]);
@@ -195,6 +243,7 @@ impl HexView<'_> {
         None
     }
 
+    /// Checks whether a byte offset falls within the currently focused decode range.
     fn is_in_focused_range(&self, offset: usize, focused: &Option<(usize, usize)>) -> bool {
         if let Some((start, end)) = focused {
             offset >= *start && offset <= *end
@@ -203,7 +252,18 @@ impl HexView<'_> {
         }
     }
 
-    fn byte_style(&self, offset: usize, byte_val: u8, sel_start: usize, sel_end: usize, highlights: &[(usize, usize, usize)], focused: &Option<(usize, usize)>) -> Style {
+    /// Computes the style for a hex byte based on cursor, selection, range, and focus state.
+    ///
+    /// Priority order: cursor > range highlight > selection > byte category color.
+    fn byte_style(
+        &self,
+        offset: usize,
+        byte_val: u8,
+        sel_start: usize,
+        sel_end: usize,
+        highlights: &[(usize, usize, usize)],
+        focused: &Option<(usize, usize)>,
+    ) -> Style {
         let is_cursor = offset == self.app.cursor;
         let is_selected = offset >= sel_start && offset <= sel_end;
         let is_focused = self.is_in_focused_range(offset, focused);
@@ -214,9 +274,7 @@ impl HexView<'_> {
                 .bg(Color::White)
                 .add_modifier(Modifier::BOLD)
         } else if let Some((r, g, b)) = self.find_range_color(offset, highlights) {
-            let mut style = Style::default()
-                .fg(Color::Black)
-                .bg(Color::Rgb(r, g, b));
+            let mut style = Style::default().fg(Color::Black).bg(Color::Rgb(r, g, b));
             if is_focused {
                 style = style
                     .add_modifier(Modifier::BOLD)
@@ -233,7 +291,19 @@ impl HexView<'_> {
         }
     }
 
-    fn ascii_style(&self, offset: usize, byte_val: u8, sel_start: usize, sel_end: usize, highlights: &[(usize, usize, usize)], focused: &Option<(usize, usize)>) -> Style {
+    /// Computes the style for an ASCII column character.
+    ///
+    /// Similar to [`byte_style`](Self::byte_style) but uses different colors
+    /// for the cursor (yellow) and selection (green tint).
+    fn ascii_style(
+        &self,
+        offset: usize,
+        byte_val: u8,
+        sel_start: usize,
+        sel_end: usize,
+        highlights: &[(usize, usize, usize)],
+        focused: &Option<(usize, usize)>,
+    ) -> Style {
         let is_cursor = offset == self.app.cursor;
         let is_selected = offset >= sel_start && offset <= sel_end;
         let is_focused = self.is_in_focused_range(offset, focused);
@@ -244,9 +314,7 @@ impl HexView<'_> {
                 .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD)
         } else if let Some((r, g, b)) = self.find_range_color(offset, highlights) {
-            let mut style = Style::default()
-                .fg(Color::Black)
-                .bg(Color::Rgb(r, g, b));
+            let mut style = Style::default().fg(Color::Black).bg(Color::Rgb(r, g, b));
             if is_focused {
                 style = style
                     .add_modifier(Modifier::BOLD)
@@ -266,7 +334,13 @@ impl HexView<'_> {
     }
 }
 
-/// Color bytes by category (like hexyl)
+/// Returns a color for a byte value based on its category (similar to hexyl).
+///
+/// - `0x00` (null): dark gray
+/// - Whitespace: muted green
+/// - Printable ASCII: cyan
+/// - `0xFF`: red
+/// - Everything else: amber/orange
 fn byte_color(b: u8) -> Color {
     match b {
         0x00 => Color::DarkGray,

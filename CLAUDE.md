@@ -18,19 +18,39 @@ turbohex --skills        # print decoder plugin development guide for LLM agents
 
 ```
 src/
-  main.rs           CLI entry, terminal setup (crossterm), main event loop
-  app.rs            App state, cursor/selection, keyboard dispatch
-  ui.rs             ratatui layout: hex view + decode panel + status bar + help popup
-  hex_view.rs       Custom ratatui Widget for hex display with color-coded bytes
-  decode.rs         Built-in decoders (int/float/string/timestamp), Endian enum, DecodedValue struct
-  decoder_lua.rs    Loads .lua files from ~/.config/turbohex/decoders/ via mlua
-  decoder_wasm.rs   Loads .wasm files from ~/.config/turbohex/decoders/ via wasmtime
-  file_buffer.rs    File loading: mmap (>1MB) or Vec<u8> (small files)
-  skills.md         Printed by `turbohex --skills`; decoder ABI + examples for agent workflows
+  main.rs              CLI entry, terminal setup (crossterm), main event loop
+  file_buffer.rs       File loading: mmap (>1MB) or Vec<u8> (small files)
+  hex_view.rs          Custom ratatui Widget for hex display with color-coded bytes
+  skills.md            Printed by `turbohex --skills`; decoder ABI + examples for agent workflows
+
+  app/
+    mod.rs             App struct, core methods, decoder registration
+    types.rs           InputMode, SelectionMode, DecoderSource, DecoderParam, DecoderInfo
+    input.rs           Keyboard handlers for all input modes
+    selection.rs       Cursor movement, selection range, scroll management
+
+  decode/
+    mod.rs             Re-exports all decoding types and managers
+    types.rs           Endian, DecodedValue, RANGE_COLORS, byte read/format helpers
+    builtin.rs         Built-in decoders (int/float/string/timestamp via chrono)
+    bits.rs            Bit-level decoder for sub-byte field inspection
+    stats.rs           ByteStats, entropy, sparsity, uniqueness analysis
+    lua.rs             Lua decoder plugin manager (mlua)
+    wasm/
+      mod.rs           WASM decoder plugin manager (wasmtime)
+      json.rs          Minimal JSON parser for WASM ABI communication
+
+  ui/
+    mod.rs             Main draw function, layout orchestration
+    decode_panel.rs    Decode results list with color swatches
+    stats_panel.rs     Per-field entropy/byte statistics table
+    status_bar.rs      Bottom status bar (offset, mode, entropy)
+    popups.rs          Help popup and decoder settings popup
+    helpers.rs         Shared utilities (centered_rect, entropy_bar_short)
 
 examples/
-  wasm-decoder-rust/  Rust WASM decoder example (file magic, entropy, byte stats)
-  wasm-decoder-c/     C WASM decoder example (RGB/RGBA color)
+  wasm-decoder-rust/   Rust WASM decoder example (file magic, entropy, byte stats)
+  wasm-decoder-c/      C WASM decoder example (RGB/RGBA color)
 ```
 
 ## Key Design Decisions
@@ -46,6 +66,7 @@ examples/
 
 - ratatui 0.30 + crossterm 0.29 (TUI)
 - clap 4 with derive (CLI)
+- chrono (timestamp formatting)
 - memmap2 (large file support)
 - mlua with lua54+vendored (Lua scripting)
 - wasmtime with cranelift (WASM runtime)
@@ -62,6 +83,7 @@ cp target/wasm32-unknown-unknown/release/decoder_example.wasm ~/.config/turbohex
 
 ## Conventions
 
-- All keybindings are handled in `app.rs` `handle_normal_key()` / `handle_goto_key()`
-- New InputMode variants must be matched in `app.rs:handle_key()` and `ui.rs` status bar + help popup
+- All keybindings are handled in `app/input.rs` (`handle_normal_key()`, `handle_goto_key()`, etc.)
+- New InputMode variants must be matched in `app/input.rs:handle_key()` and `ui/status_bar.rs` + `ui/popups.rs`
+- Cursor/selection logic lives in `app/selection.rs`
 - Decoder managers follow the same pattern: `new()`, `load_decoders()`, `decode(&[u8], Endian) -> Vec<DecodedValue>`

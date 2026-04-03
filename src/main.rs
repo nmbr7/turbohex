@@ -1,7 +1,5 @@
 mod app;
 mod decode;
-mod decoder_lua;
-mod decoder_wasm;
 mod file_buffer;
 mod hex_view;
 mod ui;
@@ -12,15 +10,14 @@ use std::time::Duration;
 
 use clap::Parser;
 use crossterm::{
-    event::{self, Event, EnableMouseCapture, DisableMouseCapture, MouseEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 use app::{App, DecoderSource};
-use decoder_lua::LuaDecoderManager;
-use decoder_wasm::WasmDecoderManager;
+use decode::{LuaDecoderManager, WasmDecoderManager};
 use file_buffer::FileBuffer;
 
 #[derive(Parser)]
@@ -85,7 +82,11 @@ fn main() -> io::Result<()> {
 
     // Restore terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
 
     result
@@ -111,46 +112,61 @@ fn run_loop(
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             if let Some(area) = app.hex_area {
-                                if col >= area.x && col < area.x + area.width
-                                    && row >= area.y && row < area.y + area.height
+                                if col >= area.x
+                                    && col < area.x + area.width
+                                    && row >= area.y
+                                    && row < area.y + area.height
                                 {
                                     app.scroll_offset = app.scroll_offset.saturating_sub(3);
                                 }
                             }
                             if let Some(area) = app.decode_area {
-                                if col >= area.x && col < area.x + area.width
-                                    && row >= area.y && row < area.y + area.height
+                                if col >= area.x
+                                    && col < area.x + area.width
+                                    && row >= area.y
+                                    && row < area.y + area.height
                                 {
-                                    app.decode_scroll_offset = app.decode_scroll_offset.saturating_sub(3);
+                                    app.decode_scroll_offset =
+                                        app.decode_scroll_offset.saturating_sub(3);
                                 }
                             }
                             if let Some(area) = app.stats_area {
-                                if col >= area.x && col < area.x + area.width
-                                    && row >= area.y && row < area.y + area.height
+                                if col >= area.x
+                                    && col < area.x + area.width
+                                    && row >= area.y
+                                    && row < area.y + area.height
                                 {
-                                    app.stats_scroll_offset = app.stats_scroll_offset.saturating_sub(3);
+                                    app.stats_scroll_offset =
+                                        app.stats_scroll_offset.saturating_sub(3);
                                 }
                             }
                         }
                         MouseEventKind::ScrollDown => {
                             if let Some(area) = app.hex_area {
-                                if col >= area.x && col < area.x + area.width
-                                    && row >= area.y && row < area.y + area.height
+                                if col >= area.x
+                                    && col < area.x + area.width
+                                    && row >= area.y
+                                    && row < area.y + area.height
                                 {
-                                    let max_scroll = app.total_rows().saturating_sub(app.visible_rows);
+                                    let max_scroll =
+                                        app.total_rows().saturating_sub(app.visible_rows);
                                     app.scroll_offset = (app.scroll_offset + 3).min(max_scroll);
                                 }
                             }
                             if let Some(area) = app.decode_area {
-                                if col >= area.x && col < area.x + area.width
-                                    && row >= area.y && row < area.y + area.height
+                                if col >= area.x
+                                    && col < area.x + area.width
+                                    && row >= area.y
+                                    && row < area.y + area.height
                                 {
                                     app.decode_scroll_offset += 3;
                                 }
                             }
                             if let Some(area) = app.stats_area {
-                                if col >= area.x && col < area.x + area.width
-                                    && row >= area.y && row < area.y + area.height
+                                if col >= area.x
+                                    && col < area.x + area.width
+                                    && row >= area.y
+                                    && row < area.y + area.height
                                 {
                                     app.stats_scroll_offset += 3;
                                 }

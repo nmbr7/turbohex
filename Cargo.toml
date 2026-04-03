@@ -20,6 +20,7 @@ categories = [
 
 
 [dependencies]
+chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
 clap = { version = "4.6.0", features = ["derive"] }
 crossterm = "0.29.0"
 memmap2 = "0.9.10"

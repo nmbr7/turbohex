@@ -1,46 +1,68 @@
+//! Lua decoder plugin manager.
+//!
+//! Loads `.lua` files from `~/.config/turbohex/decoders/` and runs their
+//! `decode(bytes, endian, params)` function against the current selection.
+//! Each Lua decoder runs in a sandboxed Lua state with only safe computation
+//! libraries (table, string, utf8, math) — no filesystem or OS access.
+
 use mlua::{Lua, Result as LuaResult, StdLib, Value};
 use std::path::PathBuf;
 
 use crate::app::{DecoderParam, ParamType};
-use crate::decode::{DecodedValue, Endian};
+use super::types::{DecodedValue, Endian};
 
+/// A discovered Lua decoder script on disk.
 struct LuaDecoder {
+    /// Display name derived from the filename stem.
     name: String,
+    /// Absolute path to the `.lua` file.
     path: PathBuf,
 }
 
+/// Manages discovery, loading, and execution of Lua decoder plugins.
+///
+/// On first use, scans `~/.config/turbohex/decoders/` for `.lua` files.
+/// If the directory doesn't exist, creates it and writes an example decoder.
+/// Each decode call re-reads the script from disk, enabling live editing.
 pub struct LuaDecoderManager {
+    /// Shared sandboxed Lua runtime (no io/os/package/debug access).
     lua: Lua,
+    /// List of discovered decoder scripts.
     decoders: Vec<LuaDecoder>,
+    /// Whether the initial directory scan has been performed.
     loaded: bool,
 }
 
 impl LuaDecoderManager {
+    /// Creates a new manager with a sandboxed Lua state.
+    ///
+    /// The Lua runtime is restricted to `TABLE | STRING | UTF8 | MATH` standard
+    /// libraries, preventing filesystem access, command execution, and module loading.
     pub fn new() -> Self {
         Self {
-            // Sandbox: only load safe computation libraries.
-            // Excludes io, os, package, debug, coroutine to prevent
-            // filesystem access, command execution, and module loading.
             lua: Lua::new_with(
                 StdLib::TABLE | StdLib::STRING | StdLib::UTF8 | StdLib::MATH,
                 mlua::LuaOptions::default(),
-            ).expect("Failed to create sandboxed Lua state"),
+            )
+            .expect("Failed to create sandboxed Lua state"),
             decoders: Vec::new(),
             loaded: false,
         }
     }
 
+    /// Scans the decoder directory for `.lua` files and registers them.
+    ///
+    /// Creates the directory and an example decoder if it doesn't exist.
+    /// This method is idempotent — subsequent calls are no-ops.
     pub fn load_decoders(&mut self) {
         if self.loaded {
             return;
         }
         self.loaded = true;
 
-        let config_dir = dirs_path();
+        let config_dir = decoders_path();
         if !config_dir.exists() {
-            // Create the directory so users know where to put decoders
             let _ = std::fs::create_dir_all(&config_dir);
-            // Write an example decoder
             let example = config_dir.join("example.lua");
             if !example.exists() {
                 let _ = std::fs::write(
@@ -75,7 +97,6 @@ end
             return;
         }
 
-        // Scan for .lua files
         if let Ok(entries) = std::fs::read_dir(&config_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -91,12 +112,16 @@ end
         }
     }
 
+    /// Returns the names of all discovered Lua decoders.
     pub fn decoder_names(&self) -> Vec<String> {
         self.decoders.iter().map(|d| d.name.clone()).collect()
     }
 
-    /// Query the optional `params()` function from a Lua decoder.
-    /// Returns param definitions: [{name, type, default, choices?}]
+    /// Queries the optional `params()` function from a Lua decoder script.
+    ///
+    /// If the script exports a `params()` function, it should return a table
+    /// of parameter definitions: `[{name, type, default, choices?}]`.
+    /// Returns an empty vec if the function is absent or fails.
     pub fn query_params(&self, decoder_name: &str) -> Vec<DecoderParam> {
         let decoder = match self.decoders.iter().find(|d| d.name == decoder_name) {
             Some(d) => d,
@@ -106,51 +131,64 @@ end
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
-        self.lua.scope(|_scope| {
-            self.lua.load(&source).exec().ok();
-            let params_fn: mlua::Function = match self.lua.globals().get("params") {
-                Ok(f) => f,
-                Err(_) => return Ok(Vec::new()),
-            };
-            let result: Value = params_fn.call(()).unwrap_or(Value::Nil);
-            let mut params = Vec::new();
-            if let Value::Table(table) = result {
-                for entry in table.sequence_values::<mlua::Table>().flatten() {
-                    let name: String = entry.get("name").unwrap_or_default();
-                    let type_str: String = entry.get("type").unwrap_or_else(|_| "string".to_string());
-                    let default: String = entry.get("default").unwrap_or_default();
-                    let param_type = match type_str.as_str() {
-                        "int" => ParamType::Int,
-                        "bool" => ParamType::Bool,
-                        "choice" => {
-                            let choices: Vec<String> = entry
-                                .get::<mlua::Table>("choices")
-                                .ok()
-                                .map(|t| {
-                                    t.sequence_values::<String>()
-                                        .flatten()
-                                        .collect()
-                                })
-                                .unwrap_or_default();
-                            ParamType::Choice(choices)
+        self.lua
+            .scope(|_scope| {
+                self.lua.load(&source).exec().ok();
+                let params_fn: mlua::Function = match self.lua.globals().get("params") {
+                    Ok(f) => f,
+                    Err(_) => return Ok(Vec::new()),
+                };
+                let result: Value = params_fn.call(()).unwrap_or(Value::Nil);
+                let mut params = Vec::new();
+                if let Value::Table(table) = result {
+                    for entry in table.sequence_values::<mlua::Table>().flatten() {
+                        let name: String = entry.get("name").unwrap_or_default();
+                        let type_str: String =
+                            entry.get("type").unwrap_or_else(|_| "string".to_string());
+                        let default: String = entry.get("default").unwrap_or_default();
+                        let param_type = match type_str.as_str() {
+                            "int" => ParamType::Int,
+                            "bool" => ParamType::Bool,
+                            "choice" => {
+                                let choices: Vec<String> = entry
+                                    .get::<mlua::Table>("choices")
+                                    .ok()
+                                    .map(|t| t.sequence_values::<String>().flatten().collect())
+                                    .unwrap_or_default();
+                                ParamType::Choice(choices)
+                            }
+                            _ => ParamType::String,
+                        };
+                        if !name.is_empty() {
+                            params.push(DecoderParam {
+                                name,
+                                param_type,
+                                default: default.clone(),
+                                value: default,
+                            });
                         }
-                        _ => ParamType::String,
-                    };
-                    if !name.is_empty() {
-                        params.push(DecoderParam {
-                            name,
-                            param_type,
-                            default: default.clone(),
-                            value: default,
-                        });
                     }
                 }
-            }
-            Ok(params)
-        }).unwrap_or_default()
+                Ok(params)
+            })
+            .unwrap_or_default()
     }
 
-    pub fn decode(&mut self, bytes: &[u8], endian: Endian, enabled: &dyn Fn(&str) -> bool, params: &dyn Fn(&str) -> Vec<(String, String)>) -> Vec<DecodedValue> {
+    /// Runs all enabled Lua decoders against the given bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The selected byte slice to decode.
+    /// * `endian` - Current byte order setting.
+    /// * `enabled` - Predicate that returns whether a decoder (by name) is enabled.
+    /// * `params` - Returns the current parameter values for a decoder (by name).
+    pub fn decode(
+        &mut self,
+        bytes: &[u8],
+        endian: Endian,
+        enabled: &dyn Fn(&str) -> bool,
+        params: &dyn Fn(&str) -> Vec<(String, String)>,
+    ) -> Vec<DecodedValue> {
         if !self.loaded {
             self.load_decoders();
         }
@@ -178,6 +216,11 @@ end
         results
     }
 
+    /// Executes a single Lua decoder script and parses its results.
+    ///
+    /// Re-reads the script from disk on each call, allowing live editing.
+    /// The Lua `decode(bytes, endian, params)` function receives a 1-indexed
+    /// byte table, an endian string (`"LE"` / `"BE"`), and a params table.
     fn run_decoder(
         &self,
         path: &PathBuf,
@@ -194,10 +237,10 @@ end
 
             let decode_fn: mlua::Function = self.lua.globals().get("decode")?;
 
-            // Create bytes table
+            // Create 1-indexed bytes table
             let bytes_table = self.lua.create_table()?;
             for (i, &b) in bytes.iter().enumerate() {
-                bytes_table.set(i + 1, b)?; // Lua is 1-indexed
+                bytes_table.set(i + 1, b)?;
             }
 
             let endian_str = endian.label();
@@ -238,7 +281,8 @@ end
     }
 }
 
-fn dirs_path() -> PathBuf {
+/// Returns the path to the decoder plugins directory.
+fn decoders_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home)
         .join(".config")
