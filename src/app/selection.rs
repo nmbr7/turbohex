@@ -221,6 +221,89 @@ impl App {
         }
     }
 
+    /// Returns the effective count multiplier, consuming the stored prefix.
+    /// Returns 1 if no count was entered.
+    pub(super) fn take_count(&mut self) -> usize {
+        self.count_prefix.take().unwrap_or(1)
+    }
+
+    /// Moves the selection window forward by `count` chunk lengths.
+    ///
+    /// A "chunk" is the current selection length (inclusive). If no selection
+    /// exists, does nothing. Updates cursor and scrolls to keep it visible.
+    pub(super) fn navigate_chunk_forward(&mut self, count: usize) {
+        match self.mode {
+            SelectionMode::Byte => {
+                let (Some(anchor), Some(end)) = (self.selection_anchor, self.selection_end) else {
+                    return;
+                };
+                let start = anchor.min(end);
+                let sel_end = anchor.max(end);
+                let sel_len = sel_end - start + 1;
+                let file_max = self.file_len().saturating_sub(1);
+                let new_start = (start + sel_len * count).min(file_max);
+                let new_end = (new_start + sel_len - 1).min(file_max);
+                self.selection_anchor = Some(new_start);
+                self.selection_end = Some(new_end);
+                self.cursor = new_start;
+            }
+            SelectionMode::Bit => {
+                let (Some(anchor), Some(end)) =
+                    (self.bit_selection_anchor, self.bit_selection_end)
+                else {
+                    return;
+                };
+                let start = anchor.min(end);
+                let sel_end = anchor.max(end);
+                let sel_len = sel_end - start + 1;
+                let max_bits = self.file_len().saturating_mul(8).saturating_sub(1);
+                let new_start = (start + sel_len * count).min(max_bits);
+                let new_end = (new_start + sel_len - 1).min(max_bits);
+                self.bit_selection_anchor = Some(new_start);
+                self.bit_selection_end = Some(new_end);
+                self.bit_cursor = new_start;
+                self.cursor = new_start / 8;
+            }
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// Moves the selection window backward by `count` chunk lengths.
+    pub(super) fn navigate_chunk_backward(&mut self, count: usize) {
+        match self.mode {
+            SelectionMode::Byte => {
+                let (Some(anchor), Some(end)) = (self.selection_anchor, self.selection_end) else {
+                    return;
+                };
+                let start = anchor.min(end);
+                let sel_end = anchor.max(end);
+                let sel_len = sel_end - start + 1;
+                let new_start = start.saturating_sub(sel_len * count);
+                let new_end = new_start + sel_len - 1;
+                self.selection_anchor = Some(new_start);
+                self.selection_end = Some(new_end);
+                self.cursor = new_start;
+            }
+            SelectionMode::Bit => {
+                let (Some(anchor), Some(end)) =
+                    (self.bit_selection_anchor, self.bit_selection_end)
+                else {
+                    return;
+                };
+                let start = anchor.min(end);
+                let sel_end = anchor.max(end);
+                let sel_len = sel_end - start + 1;
+                let new_start = start.saturating_sub(sel_len * count);
+                let new_end = new_start + sel_len - 1;
+                self.bit_selection_anchor = Some(new_start);
+                self.bit_selection_end = Some(new_end);
+                self.bit_cursor = new_start;
+                self.cursor = new_start / 8;
+            }
+        }
+        self.ensure_cursor_visible();
+    }
+
     /// Adjusts `scroll_offset` so the focused decode entry's byte range is visible.
     pub(super) fn ensure_focused_range_visible(&mut self) {
         if let Some((start, end)) = self.focused_range() {

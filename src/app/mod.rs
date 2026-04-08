@@ -12,6 +12,7 @@
 //! - [`selection`]: Cursor movement, selection range computation, and scroll management.
 
 pub mod input;
+pub mod search;
 pub mod selection;
 pub mod types;
 
@@ -99,6 +100,18 @@ pub struct App {
     pub show_stats_panel: bool,
     /// Vertical scroll offset within the stats panel.
     pub stats_scroll_offset: usize,
+
+    // Count prefix state
+    /// Accumulated digit count prefix for vim-style movement multiplication.
+    pub count_prefix: Option<usize>,
+
+    // Search state
+    /// Text buffer for the search input prompt.
+    pub search_input: String,
+    /// The last successfully parsed search pattern (raw bytes).
+    pub search_pattern: Option<Vec<u8>>,
+    /// Whether the last search input was interpreted as hex.
+    pub search_was_hex: bool,
 }
 
 impl App {
@@ -136,6 +149,10 @@ impl App {
             param_edit_input: String::new(),
             show_stats_panel: false,
             stats_scroll_offset: 0,
+            count_prefix: None,
+            search_input: String::new(),
+            search_pattern: None,
+            search_was_hex: false,
         }
     }
 

@@ -20,6 +20,7 @@ impl App {
             InputMode::DecoderSettings => self.handle_decoder_settings_key(key),
             InputMode::ParamEdit => self.handle_param_edit_key(key),
             InputMode::GotoOffset => self.handle_goto_key(key),
+            InputMode::SearchInput => self.handle_search_key(key),
             InputMode::Normal | InputMode::Selecting => self.handle_normal_key(key),
         }
     }
@@ -188,9 +189,21 @@ impl App {
     /// Handles keys in Normal and Selecting modes (the main browsing modes).
     ///
     /// Provides navigation (arrows, Page Up/Down, Home/End), mode toggles
-    /// (endian, byte/bit, selection), layout controls, and decode focus cycling.
+    /// (endian, byte/bit, selection), layout controls, decode focus cycling,
+    /// search, and vim-style count prefix for movement multiplication.
     pub(super) fn handle_normal_key(&mut self, key: KeyEvent) {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
+        // Digit accumulation for count prefix (vim-style)
+        if let KeyCode::Char(c @ '0'..='9') = key.code {
+            let digit = (c as usize) - ('0' as usize);
+            let current = self.count_prefix.unwrap_or(0);
+            self.count_prefix = Some(current.saturating_mul(10).saturating_add(digit).min(999_999));
+            return;
+        }
+
+        // Consume count prefix for this command
+        let count = self.take_count();
 
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -240,19 +253,36 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('n') => match self.mode {
-                SelectionMode::Byte => {
-                    let temp = self.selection_anchor;
-                    self.selection_anchor = self.selection_end;
-                    self.selection_end = Some(
-                        self.selection_end.unwrap() + (self.selection_end.unwrap() - temp.unwrap()),
-                    );
+            KeyCode::Char('N') => {
+                if self.search_pattern.is_some() {
+                    self.search_prev(count);
+                } else {
+                    self.navigate_chunk_backward(count);
                 }
-                SelectionMode::Bit => {
-                    self.bit_selection_anchor = Some(self.bit_cursor);
-                    self.bit_selection_end = Some(self.bit_cursor);
+            }
+            KeyCode::Char('n') => {
+                if self.search_pattern.is_some() {
+                    self.search_next(count);
+                } else {
+                    self.navigate_chunk_forward(count);
                 }
-            },
+            }
+            KeyCode::Char('/') => {
+                self.input_mode = InputMode::SearchInput;
+                self.search_input.clear();
+            }
+            KeyCode::Char('*') => {
+                // Search forward: if there's an active selection, use it as pattern;
+                // otherwise repeat the last search pattern.
+                if self.selection_anchor.is_some() {
+                    self.search_selected_bytes();
+                } else {
+                    self.search_next(count);
+                }
+            }
+            KeyCode::Char('#') => {
+                self.search_prev(count);
+            }
             KeyCode::Char('g') => {
                 self.input_mode = InputMode::GotoOffset;
                 self.goto_input.clear();
@@ -285,18 +315,26 @@ impl App {
                     self.stats_scroll_offset += 3;
                 }
             }
-            KeyCode::Left => self.move_cursor(-1),
-            KeyCode::Right => self.move_cursor(1),
-            KeyCode::Up if shift => self.move_cursor(-(50 * self.bytes_per_row as isize)),
-            KeyCode::Down if shift => self.move_cursor(50 * self.bytes_per_row as isize),
-            KeyCode::Up => self.move_cursor(-(self.bytes_per_row as isize)),
-            KeyCode::Down => self.move_cursor(self.bytes_per_row as isize),
+            KeyCode::Left => self.move_cursor(-(count as isize)),
+            KeyCode::Right => self.move_cursor(count as isize),
+            KeyCode::Up if shift => {
+                self.move_cursor(-((50 * self.bytes_per_row * count) as isize));
+            }
+            KeyCode::Down if shift => {
+                self.move_cursor((50 * self.bytes_per_row * count) as isize);
+            }
+            KeyCode::Up => {
+                self.move_cursor(-((self.bytes_per_row * count) as isize));
+            }
+            KeyCode::Down => {
+                self.move_cursor((self.bytes_per_row * count) as isize);
+            }
             KeyCode::PageUp => {
-                let jump = self.visible_rows.saturating_sub(1) * self.bytes_per_row;
+                let jump = self.visible_rows.saturating_sub(1) * self.bytes_per_row * count;
                 self.move_cursor(-(jump as isize));
             }
             KeyCode::PageDown => {
-                let jump = self.visible_rows.saturating_sub(1) * self.bytes_per_row;
+                let jump = self.visible_rows.saturating_sub(1) * self.bytes_per_row * count;
                 self.move_cursor(jump as isize);
             }
             KeyCode::Home => {
@@ -333,6 +371,9 @@ impl App {
                 } else if self.input_mode == InputMode::Selecting {
                     self.input_mode = InputMode::Normal;
                     self.clear_selection();
+                } else if self.search_pattern.is_some() {
+                    self.search_pattern = None;
+                    self.search_input.clear();
                 } else {
                     self.clear_selection();
                 }

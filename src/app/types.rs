@@ -18,6 +18,8 @@ pub enum InputMode {
     Selecting,
     /// Text input mode for the "goto offset" prompt.
     GotoOffset,
+    /// Text input mode for byte pattern search.
+    SearchInput,
     /// Modal help popup is displayed; any key dismisses it.
     Help,
     /// Decoder settings popup for enabling/disabling decoders and editing params.

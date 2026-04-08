@@ -32,15 +32,20 @@ pub fn draw_help_popup(frame: &mut Frame, area: Rect) {
             "Navigation",
             &[
                 ("Arrow keys", "Move cursor"),
+                ("0-9", "Count prefix (multiplies next movement)"),
                 ("Page Up/Down", "Scroll one page"),
                 ("Home / End", "Jump to start / end of file"),
                 ("g", "Goto offset (hex: 0x..., or decimal)"),
+                ("/", "Search for hex bytes or ASCII text"),
+                ("*", "Search selected bytes / find next match"),
+                ("#", "Find previous match"),
             ],
         ),
         (
             "Selection",
             &[
                 ("v", "Toggle select mode (anchor at cursor)"),
+                ("n / N", "Next/prev search match or chunk"),
                 ("Esc", "Clear selection / cancel"),
             ],
         ),

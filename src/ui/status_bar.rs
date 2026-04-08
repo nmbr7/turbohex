@@ -6,7 +6,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -35,6 +35,11 @@ pub fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         InputMode::GotoOffset => Line::from(vec![
             Span::styled(" Goto offset: ", Style::default().fg(Color::Yellow)),
             Span::styled(&app.goto_input, Style::default().fg(Color::White)),
+            Span::styled("\u{2588}", Style::default().fg(Color::White)),
+        ]),
+        InputMode::SearchInput => Line::from(vec![
+            Span::styled(" Search: ", Style::default().fg(Color::Yellow)),
+            Span::styled(&app.search_input, Style::default().fg(Color::White)),
             Span::styled("\u{2588}", Style::default().fg(Color::White)),
         ]),
         InputMode::Normal
@@ -78,6 +83,32 @@ pub fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 spans.push(Span::styled(
                     format!("Bits: {}:{}", bit_off, bit_len),
                     Style::default().fg(Color::Rgb(200, 140, 60)),
+                ));
+            }
+
+            // Count prefix indicator
+            if let Some(count) = app.count_prefix {
+                spans.insert(
+                    0,
+                    Span::styled(
+                        format!(" {}", count),
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                );
+            }
+
+            // Active search pattern indicator
+            if app.search_pattern.is_some() {
+                let label = if app.search_was_hex { "hex" } else { "ascii" };
+                spans.push(Span::styled(
+                    "  \u{2502}  ",
+                    Style::default().fg(Color::DarkGray),
+                ));
+                spans.push(Span::styled(
+                    format!("/{} [{}]", app.search_input, label),
+                    Style::default().fg(Color::Rgb(200, 180, 100)),
                 ));
             }
 
