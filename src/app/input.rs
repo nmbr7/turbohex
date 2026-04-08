@@ -240,6 +240,19 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('n') => match self.mode {
+                SelectionMode::Byte => {
+                    let temp = self.selection_anchor;
+                    self.selection_anchor = self.selection_end;
+                    self.selection_end = Some(
+                        self.selection_end.unwrap() + (self.selection_end.unwrap() - temp.unwrap()),
+                    );
+                }
+                SelectionMode::Bit => {
+                    self.bit_selection_anchor = Some(self.bit_cursor);
+                    self.bit_selection_end = Some(self.bit_cursor);
+                }
+            },
             KeyCode::Char('g') => {
                 self.input_mode = InputMode::GotoOffset;
                 self.goto_input.clear();
