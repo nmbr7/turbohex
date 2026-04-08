@@ -1,6 +1,6 @@
 [package]
 name = "turbohex"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Interactive terminal hex-viewer with plugin-based decoders"
 readme = "README.md"

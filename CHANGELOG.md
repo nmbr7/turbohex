@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.1 — Navigation & Search
+
+### Navigation
+- Vim-style count prefix: type `0-9` then a movement key to multiply it (e.g., `5→` moves 5 bytes)
+- Chunk navigation: `n` / `N` advances or retreats the selection by its own length for striding through repeated structures
+- Count prefix works with all movement keys (arrows, Page Up/Down, Shift+Up/Down, `n`/`N`)
+
+### Search
+- `/` opens a search prompt — type hex bytes (e.g., `FF D8 FF`) or ASCII text, press Enter to jump to the first match
+- Auto-detects hex vs ASCII: space-separated 2-char hex tokens are parsed as bytes, everything else as ASCII
+- `*` searches forward for the currently selected bytes (like vim's word-under-cursor search)
+- `#` searches backward for the last search pattern
+- `n` / `N` jump to next / previous match while a search is active
+- Esc clears the search pattern and returns `n`/`N` to chunk navigation mode
+- Active search pattern shown in the status bar
+
+### Fixes
+- Fixed `n`/`N` chunk navigation panic when no selection was active
+- Fixed bit-mode chunk navigation (was always computing zero-length moves)
+- Fixed `N` backward bit-mode navigation moving in the wrong direction
+- Chunk navigation now updates the cursor position and scrolls the viewport to follow
+
 ## v0.1.0 — Initial Release
 
 ### Hex Viewer
