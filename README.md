@@ -31,9 +31,14 @@ panel that supports both built-in and plugin decoders (Lua + WASM).
 
 - Fast TUI hex viewer with color-coded bytes and ASCII column
 - Byte and bit-level selection modes
+- Vim-style count prefix for movement multiplication (`5→` moves 5 bytes)
+- Byte pattern search: hex bytes (`/` then `FF D8 FF`) or ASCII text
+- Search by selection (`*`) with `n`/`N` to cycle matches
+- Chunk navigation: `n`/`N` strides through repeated structures by selection size
 - Live decode panel (integers, floats, strings, timestamps, and more)
 - Range-aware decode fields (`offset`/`length`) with byte highlighting
 - Decoder focus with `Tab` / `Shift+Tab` and visual markers in hex view
+- Stats panel with per-field entropy, compressibility, and byte statistics
 - Little-endian / big-endian toggle
 - Built-in + plugin decoders with runtime enable/disable settings
 - Memory-mapped I/O for large files
@@ -96,16 +101,25 @@ turbohex --help
 | Key | Action |
 |---|---|
 | Arrow keys | Move cursor |
+| `0-9` | Count prefix (multiplies next movement) |
 | `Page Up` / `Page Down` | Scroll one page |
+| `Shift+Up` / `Shift+Down` | Fast scroll (50 rows) |
 | `Home` / `End` | Jump to start / end |
 | `g` | Goto offset (hex `0x...` or decimal) |
 | `v` | Toggle select mode |
-| `Esc` | Clear selection / cancel / clear decode focus |
+| `n` / `N` | Next/prev search match or chunk |
+| `/` | Search for hex bytes or ASCII text |
+| `*` | Search for selected bytes / find next match |
+| `#` | Find previous match |
+| `Esc` | Clear search / selection / decode focus |
 | `b` | Toggle byte / bit mode |
 | `e` | Toggle LE / BE |
+| `w` | Toggle 16 / 32 bytes per row |
+| `s` | Toggle stats panel |
 | `d` | Open decoder settings (enable/disable decoders) |
 | `Tab` / `Shift+Tab` | Focus next/previous decoded field |
 | `[` / `]` | Shrink / grow decode panel |
+| `{` / `}` | Scroll stats panel up / down |
 | `?` | Show help |
 | `q` | Quit |
 
