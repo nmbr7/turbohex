@@ -9,8 +9,11 @@
 live decoding. It combines a fast hex/ASCII view, selection tools, and a decode
 panel that supports both built-in and plugin decoders (Lua + WASM).
 
-<img width="2842" height="1678" alt="turbohex screenshot" src="https://github.com/user-attachments/assets/c575f3bd-0ba8-4324-92b2-c48ea8bdb400" />
-Postgres heap page example.
+<p align="center">
+  <img width="800" alt="turbohex screenshot" src="https://github.com/user-attachments/assets/c575f3bd-0ba8-4324-92b2-c48ea8bdb400" />
+  <br>
+  <em>Postgres heap page example.</em>
+</p>
 
 ## Table of Contents
 
